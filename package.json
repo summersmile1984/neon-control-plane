@@ -1,0 +1,46 @@
+{
+  "name": "neon-control-plane",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Neon API v2 compatible control plane backed by self-hosted Neon open-source components",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
+    "start": "node --experimental-strip-types --env-file-if-exists=.env src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:contract": "vitest run --project contract",
+    "test:e2e": "vitest run --project e2e",
+    "verify": "pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:contract",
+    "compose:up": "docker compose -f infra/compose/docker-compose.yml up -d",
+    "compose:down": "docker compose -f infra/compose/docker-compose.yml down -v",
+    "compose:logs": "docker compose -f infra/compose/docker-compose.yml logs -f --tail=100",
+    "spec:facts": "node scripts/dump-spec-facts.mjs",
+    "create-api-key": "node scripts/create-api-key.mjs",
+    "probe:pageserver": "tsx scripts/probe-pageserver.mjs",
+    "probe:compute": "tsx scripts/probe-compute.mjs"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "better-sqlite3": "^11.8.1",
+    "hono": "^4.13.5",
+    "undici": "^7.3.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.13.0",
+    "eslint": "^9.20.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.24.0",
+    "vitest": "^3.0.5"
+  }
+}

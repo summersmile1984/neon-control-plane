@@ -1,0 +1,147 @@
+# Neon open-source storage layer for the control plane (002 §3, T-002).
+# Derived from neondatabase/neon docker-compose/docker-compose.yml, trimmed to one safekeeper
+# and without the repo's compute wrapper: computes are started by the control plane itself,
+# one container per endpoint, on the network below.
+#
+#   pnpm compose:up      start
+#   pnpm compose:logs    follow
+#   pnpm compose:down    stop and drop volumes
+name: neon-cp
+
+services:
+  minio:
+    restart: always
+    image: quay.io/minio/minio:RELEASE.2022-10-20T00-55-09Z
+    ports: ["9000:9000", "9001:9001"]
+    environment:
+      - MINIO_ROOT_USER=minio
+      - MINIO_ROOT_PASSWORD=password
+    command: server /data --address :9000 --console-address ":9001"
+    volumes: ["minio_data:/data"]
+    networks: [neon-cp]
+
+  minio_create_buckets:
+    image: minio/mc
+    environment:
+      - MINIO_ROOT_USER=minio
+      - MINIO_ROOT_PASSWORD=password
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "until (/usr/bin/mc alias set minio http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD) do
+             echo 'Waiting to start minio...' && sleep 1;
+         done;
+         /usr/bin/mc mb --ignore-existing minio/neon --region=eu-north-1;
+         exit 0;"
+    depends_on: [minio]
+    networks: [neon-cp]
+
+  storage_broker:
+    restart: always
+    image: ${NEON_REPOSITORY:-docker.io/neondatabase}/neon:${NEON_TAG:-latest}
+    ports: ["50051:50051"]
+    command: ["storage_broker", "--listen-addr=0.0.0.0:50051"]
+    networks: [neon-cp]
+
+  pageserver:
+    restart: always
+    image: ${NEON_REPOSITORY:-docker.io/neondatabase}/neon:${NEON_TAG:-latest}
+    environment:
+      - AWS_ACCESS_KEY_ID=minio
+      - AWS_SECRET_ACCESS_KEY=password
+    ports:
+      - "9898:9898" # HTTP API the control plane drives (/v1/tenant, /v1/tenant/*/timeline)
+      - "6400:6400" # Postgres protocol: computes pull basebackup and pages from here
+    volumes:
+      - ./pageserver_config:/data/.neon/
+      - pageserver_data:/data/tenants
+    depends_on: [storage_broker, minio_create_buckets]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9898/v1/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [neon-cp]
+
+  safekeeper1:
+    restart: always
+    image: ${NEON_REPOSITORY:-docker.io/neondatabase}/neon:${NEON_TAG:-latest}
+    environment:
+      - SAFEKEEPER_ADVERTISE_URL=safekeeper1:5454
+      - SAFEKEEPER_ID=1
+      - BROKER_ENDPOINT=http://storage_broker:50051
+      - AWS_ACCESS_KEY_ID=minio
+      - AWS_SECRET_ACCESS_KEY=password
+    ports:
+      - "7676:7676" # HTTP
+      - "5454:5454" # Postgres protocol: computes stream WAL here
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "safekeeper --listen-pg=$$SAFEKEEPER_ADVERTISE_URL
+                    --listen-http='0.0.0.0:7676'
+                    --id=$$SAFEKEEPER_ID
+                    --broker-endpoint=$$BROKER_ENDPOINT
+                    -D /data
+                    --remote-storage=\"{endpoint='http://minio:9000',
+                                        bucket_name='neon',
+                                        bucket_region='eu-north-1',
+                                        prefix_in_bucket='/safekeeper/'}\""
+    volumes: ["safekeeper1_data:/data"]
+    depends_on: [storage_broker, minio_create_buckets]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7676/v1/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [neon-cp]
+
+  # T-201 (pg_sni_router) is deliberately absent. Measured on build 8464, it cannot serve a Neon
+  # connection string: it splits the SNI first label on `--` and indexes three parts, so the
+  # single-label host `ep-xxx.db.siteops.localhost` panics the session handler
+  # ("index out of bounds: the len is 1 but the index is 2", pg_sni_router.rs:326). It also does
+  # no authentication and cannot wake a suspended compute. The proxy below covers every case.
+
+  # M3 (T-302): the official Neon proxy. Terminates TLS, reads the endpoint id from the SNI first
+  # label, and asks the control plane for the SCRAM verifier and the compute address, waking a
+  # suspended compute on the way. Enable with `--profile proxy`.
+  proxy:
+    profiles: [proxy]
+    restart: always
+    image: ${NEON_REPOSITORY:-docker.io/neondatabase}/neon:${NEON_TAG:-latest}
+    # 5432 by default so the connection strings need no port, which is what the SiteOps client
+    # requires. Set PROXY_PORT when a local PostgreSQL already owns 5432.
+    ports: ["${PROXY_PORT:-5432}:5432"]
+    volumes: [./certs:/certs:ro]
+    environment:
+      - NEON_PROXY_TO_CONTROLPLANE_TOKEN=${CP_PROXY_TOKEN:-local-proxy-token}
+      - RUST_LOG=${PROXY_LOG:-info}
+      # Without this the proxy retries an OTLP export to localhost:4318 every few seconds and
+      # buries the real log lines under connection-refused errors.
+      - OTEL_SDK_DISABLED=true
+    command:
+      - proxy
+      - --proxy=0.0.0.0:5432
+      - --http=0.0.0.0:7001
+      - --mgmt=0.0.0.0:7000
+      - --auth-backend=control-plane
+      # The control plane runs on the host. The proxy joins the method name onto this base with
+      # its own slash, so a trailing slash here produces `/cplane//get_endpoint_access_control`.
+      - --auth-endpoint=http://host.docker.internal:${CP_PORT:-8080}/cplane
+      - --tls-cert=/certs/wildcard.crt
+      - --tls-key=/certs/wildcard.key
+      # Not --is-private-access-proxy: that mode rejects every session that carries no VPC endpoint
+      # id ("This endpoint requires a VPC endpoint ID to connect"), which no local client sends.
+      - --sql-over-http-timeout=60s
+    extra_hosts: [host.docker.internal:host-gateway]
+    depends_on: [pageserver]
+    networks: [neon-cp]
+
+volumes:
+  minio_data:
+  pageserver_data:
+  safekeeper1_data:
+
+# The control plane starts one compute container per endpoint and attaches it here, so computes
+# reach `pageserver:6400` and `safekeeper1:5454` by name. Keep the name in sync with CP_DOCKER_NETWORK.
+networks:
+  neon-cp:
+    name: neon-cp

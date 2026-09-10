@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neon 本地控制面</title>
+<style>
+  /* A local development tool: legibility over decoration. One accent, semantic state colours,
+     everything else neutral. No build step and no CDN, so it works with the network down. */
+  :root {
+    --bg: #f6f7f8;
+    --panel: #ffffff;
+    --line: #dfe3e6;
+    --ink: #1b2124;
+    --ink-dim: #5d686e;
+    --ink-faint: #8b959b;
+    --accent: #0f6f6a;
+    --accent-soft: #e2f0ef;
+    --ok: #1a7f4b;
+    --ok-soft: #e3f3ea;
+    --warn: #8a5a00;
+    --warn-soft: #fbf0d9;
+    --bad: #a32020;
+    --bad-soft: #fbe6e6;
+    --idle: #6b7479;
+    --idle-soft: #eceff1;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+            "Microsoft YaHei", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14181a;
+      --panel: #1c2124;
+      --line: #2e3639;
+      --ink: #e6eaec;
+      --ink-dim: #a3adb2;
+      --ink-faint: #78838a;
+      --accent: #4fd1c9;
+      --accent-soft: #16302f;
+      --ok: #56d18c;
+      --ok-soft: #14301f;
+      --warn: #e0b153;
+      --warn-soft: #302713;
+      --bad: #f08a8a;
+      --bad-soft: #331a1a;
+      --idle: #97a1a6;
+      --idle-soft: #262d30;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.55 var(--sans); -webkit-font-smoothing: antialiased;
+  }
+  code, .mono { font-family: var(--mono); font-size: 12.5px; }
+  h1, h2, h3 { margin: 0; font-weight: 600; text-wrap: balance; }
+  button { font: inherit; cursor: pointer; }
+  a { color: var(--accent); }
+
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--panel); border-bottom: 1px solid var(--line);
+    padding: 12px 20px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+  }
+  header h1 { font-size: 15px; letter-spacing: .01em; }
+  header h1 span { color: var(--ink-faint); font-weight: 400; margin-left: 8px; font-size: 12px; }
+  .grow { flex: 1 1 auto; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
+    letter-spacing: .02em; white-space: nowrap;
+  }
+  .pill.ok   { background: var(--ok-soft);   color: var(--ok); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.bad  { background: var(--bad-soft);  color: var(--bad); }
+  .pill.idle { background: var(--idle-soft); color: var(--idle); }
+  .pill.info { background: var(--accent-soft); color: var(--accent); }
+
+  .btn {
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    border-radius: 6px; padding: 4px 10px; font-size: 12.5px;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--ink-faint); }
+  .btn.danger:hover { border-color: var(--bad); color: var(--bad); }
+  .btn:focus-visible, input:focus-visible, .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  input[type=text], input[type=password], input[type=number] {
+    font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--bg); color: var(--ink); min-width: 0;
+  }
+
+  /* align-items:start keeps the two columns from stretching each other; without it the taller
+     column forces the shorter one to absorb the difference into its own auto rows. */
+  main {
+    padding: 18px 20px 60px; display: grid; gap: 18px;
+    grid-template-columns: minmax(0, 1fr); align-items: start;
+  }
+  @media (min-width: 1100px) { main { grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); } }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .card > .head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 11px 14px; border-bottom: 1px solid var(--line);
+  }
+  .card > .body { padding: 12px 14px; }
+
+  /* The operation stream is long and always growing; give it its own scroll so it never sets the
+     page height, and keep it beside the projects rather than below them. */
+  @media (min-width: 1100px) {
+    .card.ops { position: sticky; top: 74px; max-height: calc(100vh - 96px); display: flex; flex-direction: column; }
+    .card.ops > .body { overflow: auto; }
+  }
+
+  .tiles { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tile {
+    border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; min-width: 92px;
+    background: var(--panel);
+  }
+  .tile b { display: block; font-size: 19px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .tile span { font-size: 11.5px; color: var(--ink-dim); }
+  .tile.alert { border-color: var(--bad); }
+  .tile.alert b { color: var(--bad); }
+
+  .stack { display: grid; gap: 12px; align-content: start; }
+  .muted { color: var(--ink-dim); }
+  .faint { color: var(--ink-faint); }
+  .empty { color: var(--ink-faint); padding: 18px 2px; text-align: center; }
+
+  .copy {
+    font-family: var(--mono); font-size: 12.5px; background: none; border: 0; padding: 0;
+    color: inherit; cursor: pointer; border-bottom: 1px dotted var(--ink-faint);
+    white-space: nowrap; /* an id broken across lines cannot be read back at a glance */
+  }
+  .copy:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-faint); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.actions { white-space: nowrap; width: 1%; }
+  td.actions .row { flex-wrap: nowrap; }
+  .scroll { overflow-x: auto; }
+
+  .branch { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .branch + .branch { margin-top: 8px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .kv { display: flex; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--ink-dim); }
+  .kv b { font-weight: 600; color: var(--ink); }
+
+  .banner { border: 1px solid var(--bad); background: var(--bad-soft); color: var(--bad); border-radius: 8px; padding: 10px 12px; }
+  .banner.warn { border-color: var(--warn); background: var(--warn-soft); color: var(--warn); }
+
+  .secret {
+    margin-top: 8px; padding: 9px 10px; border-radius: 8px;
+    border: 1px solid var(--warn); background: var(--warn-soft);
+  }
+  .secret p { margin: 0 0 6px; font-size: 11.5px; color: var(--warn); font-weight: 600; }
+  .secret textarea {
+    width: 100%; font-family: var(--mono); font-size: 12px; border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px; background: var(--panel); color: var(--ink); resize: vertical;
+  }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    background: var(--ink); color: var(--bg); padding: 7px 14px; border-radius: 999px;
+    font-size: 12.5px; box-shadow: 0 4px 14px rgba(0,0,0,.18); opacity: 0; pointer-events: none;
+    transition: opacity .16s ease;
+  }
+  #toast.show { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Neon 本地控制面<span id="mode"></span></h1>
+  <div class="grow"></div>
+  <div id="health" class="row"></div>
+  <label class="row faint" style="font-size:12px">
+    <input type="checkbox" id="auto" checked> 自动刷新
+  </label>
+  <button class="btn" id="refresh">刷新</button>
+  <input type="password" id="key" placeholder="API key（未建 key 时留空）" style="width:210px" autocomplete="off">
+</header>
+
+<main>
+  <div class="stack">
+    <div id="alerts"></div>
+
+    <div class="card">
+      <div class="head">
+        <h2>概览</h2>
+        <div class="grow"></div>
+        <span class="faint" id="stamp" style="font-size:11.5px"></span>
+      </div>
+      <div class="body">
+        <div class="tiles" id="tiles"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="head">
+        <h2>项目</h2>
+        <div class="grow"></div>
+        <input type="text" id="newName" placeholder="新项目名" style="width:150px">
+        <input type="number" id="newPg" value="17" min="14" max="17" style="width:64px" title="PostgreSQL 主版本">
+        <button class="btn" id="create">建项目</button>
+      </div>
+      <div class="body stack" id="projects"></div>
+    </div>
+  </div>
+
+  <div class="card ops">
+    <div class="head"><h2>操作流</h2><div class="grow"></div><span class="faint" id="opsNote" style="font-size:11.5px"></span></div>
+    <div class="body" id="operations"></div>
+  </div>
+</main>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  const KEY_STORAGE = 'neon-cp-console-key';
+  const REFRESH_MS = 3000;
+
+  const $ = (id) => document.getElementById(id);
+  const keyInput = $('key');
+  keyInput.value = localStorage.getItem(KEY_STORAGE) || '';
+  keyInput.addEventListener('change', () => {
+    localStorage.setItem(KEY_STORAGE, keyInput.value.trim());
+    load();
+  });
+
+  /** Builds an element. Text always goes through textContent, never innerHTML. */
+  function el(tag, props, children) {
+    const node = document.createElement(tag);
+    for (const [name, value] of Object.entries(props || {})) {
+      if (name === 'class') node.className = value;
+      else if (name === 'text') node.textContent = value;
+      else if (name.startsWith('on')) node.addEventListener(name.slice(2), value);
+      else if (value !== null && value !== undefined && value !== false) node.setAttribute(name, value);
+    }
+    for (const child of [].concat(children || [])) {
+      if (child === null || child === undefined || child === false) continue;
+      node.append(typeof child === 'string' ? document.createTextNode(child) : child);
+    }
+    return node;
+  }
+
+  let toastTimer;
+  function toast(message) {
+    const box = $('toast');
+    box.textContent = message;
+    box.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => box.classList.remove('show'), 2600);
+  }
+
+  async function copy(value) {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast('已复制');
+    } catch {
+      toast('复制失败，请手动选择');
+    }
+  }
+
+  /** Long ids are the main thing anyone copies out of this page, so make every one clickable. */
+  function id(value, title) {
+    return el('button', { class: 'copy', title: title || '点击复制', onclick: () => copy(value), text: value });
+  }
+
+  function pill(text, kind) {
+    return el('span', { class: 'pill ' + (kind || 'idle'), text });
+  }
+
+  const STATE_KIND = { active: 'ok', ready: 'ok', finished: 'ok', init: 'warn', scheduling: 'warn',
+    running: 'warn', idle: 'idle', skipped: 'idle', cancelled: 'idle', cancelling: 'warn',
+    failed: 'bad', error: 'bad', archived: 'idle' };
+  const CONTAINER_KIND = { running: 'ok', stopped: 'warn', missing: 'bad', unknown: 'idle' };
+  const DRIFT_TEXT = {
+    container_missing: '状态是 active，但容器已经不在了（多半是被手工 docker rm 了，或者 start_compute 半路失败）',
+    container_stopped: '状态是 active，但容器是停止的',
+    still_running: '状态是 idle，但容器还在跑（挂起没走完）',
+  };
+  const driftText = (code) => DRIFT_TEXT[code] || code;
+
+  async function api(path, init) {
+    const key = keyInput.value.trim();
+    const headers = Object.assign({}, (init && init.headers) || {});
+    if (key) headers.authorization = 'Bearer ' + key;
+    if (init && init.body) headers['content-type'] = 'application/json';
+    const response = await fetch(path, Object.assign({}, init, { headers }));
+    const text = await response.text();
+    let body = null;
+    try { body = text ? JSON.parse(text) : null; } catch { body = { message: text }; }
+    if (!response.ok) {
+      const detail = (body && (body.message || body.error)) || response.statusText;
+      const failure = new Error(detail);
+      failure.status = response.status;
+      throw failure;
+    }
+    return body;
+  }
+
+  /** Runs an action, reports the outcome, and refreshes. Buttons disable while it is in flight. */
+  async function act(button, label, run) {
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = '…';
+    try {
+      await run();
+      toast(label + '已提交');
+      await load();
+    } catch (error) {
+      toast(label + '失败：' + error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  }
+
+  function renderHealth(health) {
+    $('mode').textContent = health.route_mode + ' · ' + health.zone;
+    const box = $('health');
+    box.replaceChildren(
+      pill('pageserver ' + (health.pageserver.ok ? '可达' : '不可达'), health.pageserver.ok ? 'ok' : 'bad'),
+      pill('docker ' + (health.docker.ok ? '可达' : '不可达'), health.docker.ok ? 'ok' : 'bad'),
+      pill(health.api_keys === 0 ? '未建 API key（开放）' : 'API key ' + health.api_keys + ' 把',
+        health.api_keys === 0 ? 'warn' : 'info'),
+    );
+  }
+
+  function renderTiles(summary) {
+    const tiles = [
+      ['项目', summary.projects, false],
+      ['endpoint', summary.endpoints, false],
+      ['运行中 compute', summary.running_computes, false],
+      ['在途操作', summary.pending_operations, false],
+      ['失败操作', summary.failed_operations, summary.failed_operations > 0],
+      ['状态漂移', summary.drifting_endpoints, summary.drifting_endpoints > 0],
+    ];
+    $('tiles').replaceChildren(...tiles.map(([label, value, alert]) =>
+      el('div', { class: 'tile' + (alert ? ' alert' : '') }, [
+        el('b', { text: String(value) }), el('span', { text: label }),
+      ])));
+  }
+
+  function renderAlerts(snapshot) {
+    const alerts = [];
+    if (!snapshot.health.pageserver.ok) {
+      alerts.push(el('div', { class: 'banner' }, [
+        el('b', { text: 'pageserver 不可达。' }), ' 建项目和建分支都会失败。先跑 ',
+        el('code', { text: 'pnpm compose:up' }), '。',
+        snapshot.health.pageserver.error ? el('div', { class: 'mono', style: 'margin-top:4px', text: snapshot.health.pageserver.error }) : null,
+      ]));
+    }
+    if (!snapshot.health.docker.ok) {
+      alerts.push(el('div', { class: 'banner' }, [
+        el('b', { text: 'docker 不可达。' }), ' 起停 compute 都会失败，容器状态一列会显示 unknown。',
+      ]));
+    }
+    const drifting = snapshot.projects.flatMap((p) => p.endpoints.filter((e) => e.drift).map((e) => ({ project: p.id, endpoint: e })));
+    if (drifting.length > 0) {
+      alerts.push(el('div', { class: 'banner warn' }, [
+        el('b', { text: '状态漂移 ' + drifting.length + ' 个。' }),
+        ' 数据库里的状态和容器实际情况对不上，通常是有操作失败了或者容器被手工删过：',
+        el('ul', { style: 'margin:6px 0 0; padding-left:20px' }, drifting.map(({ endpoint }) =>
+          el('li', {}, [id(endpoint.id), ' ' + driftText(endpoint.drift)]))),
+      ]));
+    }
+    const failed = snapshot.operations.filter((o) => o.status === 'failed');
+    if (failed.length > 0) {
+      alerts.push(el('div', { class: 'banner' }, [
+        el('b', { text: '失败操作 ' + failed.length + ' 条。' }), ' 最近一条：',
+        el('code', { text: failed[0].action + ' — ' + (failed[0].error || '无错误详情') }),
+      ]));
+    }
+    $('alerts').replaceChildren(...alerts);
+  }
+
+  function endpointActions(project, endpoint) {
+    const post = (suffix) => () => api('/api/v2/projects/' + project.id + '/endpoints/' + endpoint.id + '/' + suffix, { method: 'POST' });
+    const start = el('button', { class: 'btn', text: '启动', onclick: () => act(start, '启动', post('start')) });
+    const suspend = el('button', { class: 'btn', text: '挂起', onclick: () => act(suspend, '挂起', post('suspend')) });
+    const restart = el('button', { class: 'btn', text: '重启', onclick: () => act(restart, '重启', post('restart')) });
+    return [start, suspend, restart];
+  }
+
+  /** The URI carries a password, so it is fetched only on an explicit click and labelled as such. */
+  function connectionBlock(project, branch) {
+    const host = el('div');
+    const database = branch.databases[0];
+    const role = branch.roles.find((r) => !r.no_login) || branch.roles[0];
+    if (!database || !role) return null;
+
+    const button = el('button', {
+      class: 'btn', text: '取连接串',
+      onclick: () => act(button, '取连接串', async () => {
+        const query = '?database_name=' + encodeURIComponent(database.name) + '&role_name=' + encodeURIComponent(role.name);
+        const body = await api('/api/v2/projects/' + project.id + '/connection_uri' + query);
+        const close = () => { host.replaceChildren(); secretClosed(); };
+        host.replaceChildren(el('div', { class: 'secret' }, [
+          el('p', { text: '这串里含明文口令，别贴到聊天或工单里。' }),
+          el('textarea', { rows: '2', readonly: 'readonly', onclick: (e) => e.target.select() }, body.uri),
+          el('div', { class: 'row', style: 'margin-top:6px' }, [
+            el('button', { class: 'btn', text: '复制', onclick: () => copy(body.uri) }),
+            el('button', { class: 'btn', text: '收起', onclick: close }),
+          ]),
+        ]));
+        secretOpened();
+      }),
+    });
+    return el('div', {}, [el('div', { class: 'row' }, [button, el('span', { class: 'faint', style: 'font-size:11.5px', text: role.name + ' @ ' + database.name })]), host]);
+  }
+
+  function renderBranch(project, branch) {
+    const endpoints = project.endpoints.filter((e) => e.branch_id === branch.id);
+    return el('div', { class: 'branch' }, [
+      el('div', { class: 'row' }, [
+        el('b', { text: branch.name }),
+        branch.is_default ? pill('default', 'info') : null,
+        pill(branch.state, STATE_KIND[branch.state]),
+        el('div', { class: 'grow' }),
+        id(branch.id),
+      ]),
+      el('div', { class: 'kv', style: 'margin-top:4px' }, [
+        el('span', {}, ['timeline ', id(branch.timeline_id)]),
+        branch.parent_id ? el('span', {}, ['父分支 ', id(branch.parent_id)]) : null,
+        branch.parent_lsn ? el('span', { text: 'LSN ' + branch.parent_lsn }) : null,
+        branch.parent_timestamp ? el('span', { text: '截点 ' + branch.parent_timestamp }) : null,
+        el('span', { text: '角色 ' + branch.roles.map((r) => r.name).join('、') || '角色 无' }),
+        el('span', { text: '库 ' + (branch.databases.map((d) => d.name).join('、') || '无') }),
+      ]),
+      endpoints.length === 0 ? null : el('div', { class: 'scroll', style: 'margin-top:8px' },
+        el('table', {}, [
+          el('thead', {}, el('tr', {}, [
+            el('th', { text: 'endpoint' }), el('th', { text: '状态' }), el('th', { text: '容器' }),
+            el('th', { text: '端口' }), el('th', { text: '' }),
+          ])),
+          // No host column: the host is always `<endpoint id>.<zone>`, and the id button below
+          // copies the id while 取连接串 hands over the whole URI, which is what actually gets pasted.
+          el('tbody', {}, endpoints.map((endpoint) => el('tr', {}, [
+            el('td', {}, [id(endpoint.id, endpoint.host), endpoint.disabled ? pill('disabled', 'bad') : null]),
+            el('td', {}, [
+              pill(endpoint.state, STATE_KIND[endpoint.state]),
+              endpoint.pending_state ? pill('→ ' + endpoint.pending_state, 'warn') : null,
+            ]),
+            el('td', {}, [
+              pill(endpoint.container, CONTAINER_KIND[endpoint.container]),
+              endpoint.drift ? pill('漂移', 'bad') : null,
+            ]),
+            el('td', { class: 'num mono', text: String(endpoint.pg_port) }),
+            el('td', { class: 'actions' }, el('div', { class: 'row' }, endpointActions(project, endpoint))),
+          ]))),
+        ])),
+      connectionBlock(project, branch),
+    ]);
+  }
+
+  function renderProject(project) {
+    const remove = el('button', {
+      class: 'btn danger', text: '删项目',
+      onclick: () => {
+        if (!confirm('删除项目 ' + project.name + '（' + project.id + '）？这会卸载 tenant 并删掉它的 compute 容器。')) return;
+        act(remove, '删除', () => api('/api/v2/projects/' + project.id, { method: 'DELETE' }));
+      },
+    });
+    return el('div', { class: 'card' }, [
+      el('div', { class: 'head' }, [
+        el('h3', { text: project.name }),
+        pill('pg ' + project.pg_version, 'info'),
+        el('div', { class: 'grow' }),
+        id(project.id),
+        remove,
+      ]),
+      el('div', { class: 'body stack' }, [
+        el('div', { class: 'kv' }, [
+          el('span', {}, ['tenant ', id(project.tenant_id)]),
+          el('span', { text: project.store_passwords ? '存口令：是' : '存口令：否（取不到连接串）' }),
+          el('span', { text: '建于 ' + project.created_at }),
+        ]),
+        ...project.branches.map((branch) => renderBranch(project, branch)),
+      ]),
+    ]);
+  }
+
+  let renderedOperations = '';
+
+  function renderOperations(operations) {
+    // Same reason as the projects list, plus one of its own: re-rendering resets this panel's
+    // scroll position, which throws you out of a long error you were reading.
+    const signature = JSON.stringify(operations);
+    if (signature === renderedOperations) return;
+    renderedOperations = signature;
+    if (operations.length === 0) {
+      $('operations').replaceChildren(el('div', { class: 'empty', text: '还没有操作' }));
+      return;
+    }
+    $('opsNote').textContent = '最近 ' + operations.length + ' 条';
+    $('operations').replaceChildren(el('table', {}, [
+      el('thead', {}, el('tr', {}, [
+        el('th', { text: '动作' }), el('th', { text: '状态' }), el('th', { text: '耗时' }), el('th', { text: '时间' }),
+      ])),
+      el('tbody', {}, operations.map((operation) => el('tr', {}, [
+        el('td', {}, [
+          el('div', { text: operation.action }),
+          el('div', { class: 'faint mono', style: 'font-size:11px', text: operation.project_id }),
+          operation.error ? el('div', { class: 'mono', style: 'font-size:11px;color:var(--bad);white-space:pre-wrap', text: operation.error }) : null,
+        ]),
+        el('td', {}, [
+          pill(operation.status, STATE_KIND[operation.status]),
+          operation.failures_count > 0 ? el('div', { class: 'faint', style: 'font-size:11px', text: '失败 ' + operation.failures_count + ' 次' }) : null,
+        ]),
+        el('td', { class: 'num faint', text: operation.total_duration_ms ? operation.total_duration_ms + ' ms' : '—' }),
+        el('td', { class: 'num faint', style: 'font-size:11px', text: (operation.created_at || '').replace('T', ' ').replace(/\..*/, '') }),
+      ]))),
+    ]));
+  }
+
+  /**
+   * Re-rendering on every poll would rebuild the DOM under the pointer: a button moves out from
+   * under a click, and an open connection string vanishes every few seconds. So skip the render
+   * when nothing changed, and hold it entirely while a secret is on screen.
+   */
+  let renderedProjects = '';
+  let projectsStale = false;
+  let openSecrets = 0;
+
+  function renderProjects(projects) {
+    const signature = JSON.stringify(projects);
+    if (signature === renderedProjects) return;
+    if (openSecrets > 0) { projectsStale = true; return; }
+    renderedProjects = signature;
+    projectsStale = false;
+    $('projects').replaceChildren(projects.length === 0
+      ? el('div', { class: 'empty', text: '还没有项目。用上面的按钮建一个。' })
+      : el('div', { class: 'stack' }, projects.map(renderProject)));
+  }
+
+  function secretOpened() { openSecrets += 1; }
+  function secretClosed() {
+    openSecrets = Math.max(0, openSecrets - 1);
+    if (openSecrets === 0 && projectsStale) load();
+  }
+
+  let inFlight = false;
+  async function load() {
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      const snapshot = await api('/console/state');
+      renderHealth(snapshot.health);
+      renderTiles(snapshot.summary);
+      renderAlerts(snapshot);
+      renderProjects(snapshot.projects);
+      renderOperations(snapshot.operations);
+      $('stamp').textContent = '更新于 ' + new Date(snapshot.generated_at).toLocaleTimeString();
+    } catch (error) {
+      const hint = error.status === 401
+        ? '需要 API key，填到右上角那个输入框里。'
+        : '读不到控制面状态：' + error.message + '。控制面起了吗（pnpm dev）？';
+      $('alerts').replaceChildren(el('div', { class: 'banner', text: hint }));
+    } finally {
+      inFlight = false;
+    }
+  }
+
+  $('refresh').addEventListener('click', load);
+  $('create').addEventListener('click', () => {
+    const button = $('create');
+    const name = $('newName').value.trim() || 'local-' + Math.random().toString(36).slice(2, 7);
+    const pgVersion = Number($('newPg').value) || 17;
+    act(button, '建项目', async () => {
+      await api('/api/v2/projects', { method: 'POST', body: JSON.stringify({ project: { name, pg_version: pgVersion } }) });
+      $('newName').value = '';
+    });
+  });
+
+  // Operations are asynchronous, so a static page would always be one step behind. Polling pauses
+  // while the tab is hidden so a forgotten tab does not keep the reconciler warm.
+  setInterval(() => {
+    if ($('auto').checked && !document.hidden) load();
+  }, REFRESH_MS);
+
+  load();
+})();
+</script>
+</body>
+</html>
