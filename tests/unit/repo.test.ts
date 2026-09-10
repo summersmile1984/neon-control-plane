@@ -31,7 +31,7 @@ beforeEach(() => {
 describe('migrations', () => {
   it('creates every table the design calls for', () => {
     const tables = repos.db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map((row) => (row as { name: string }).name);
-    for (const table of ['projects', 'branches', 'endpoints', 'roles', 'databases', 'operations', 'api_keys', 'settings']) {
+    for (const table of ['projects', 'branches', 'endpoints', 'roles', 'databases', 'operations', 'api_keys', 'settings', 'users', 'organizations', 'members', 'sessions']) {
       expect(tables, table).toContain(table);
     }
   });
@@ -233,11 +233,12 @@ describe('operations', () => {
 
 describe('api keys', () => {
   it('finds a key by hash and records use', () => {
-    const key = repos.apiKeys.insert({ id: 'key_1', name: 'local', key_hash: 'abc' });
+    const key = repos.apiKeys.insert({ name: 'local', key_hash: 'abc', created_by: 'u1' });
     expect(repos.apiKeys.findByHash('abc')?.id).toBe(key.id);
     expect(repos.apiKeys.findByHash('nope')).toBeUndefined();
-    repos.apiKeys.touch(key.id);
+    repos.apiKeys.touch(key.id, '10.0.0.1');
     expect(repos.apiKeys.findByHash('abc')?.last_used_at).toBeTruthy();
+    expect(repos.apiKeys.findByHash('abc')?.last_used_from_addr).toBe('10.0.0.1');
     expect(repos.apiKeys.count()).toBe(1);
   });
 });

@@ -14,6 +14,7 @@ import { createComputeSigner } from '../../src/domain/compute-auth.ts';
 import { nullLogger } from '../../src/logger.ts';
 import type { Config } from '../../src/config.ts';
 import { fakeAdapters, type FakeAdapters } from '../support/fakes.ts';
+import { authed, bootstrapForTest, testIdentity } from '../support/identity.ts';
 
 /**
  * T-301: the private API the Neon proxy calls. There is no published contract, so these assertions
@@ -44,19 +45,21 @@ function config(withToken: boolean): Config {
     routeMode: 'proxy', zone: 'db.siteops.localhost',
     proxyToken: withToken ? PROXY_TOKEN : undefined,
     validateResponses: true,
+    identity: testIdentity(),
   };
 }
 
 function build(withToken = true): void {
   const cfg = config(withToken);
   repos = createRepositories(openDatabase(':memory:'));
+  bootstrapForTest(repos, cfg.identity);
   fakes = fakeAdapters();
   const service = createService({ repos, pageserver: fakes.pageserver, config: cfg, logger: nullLogger });
   reconciler = createReconciler({
     repos, pageserver: fakes.pageserver, docker: fakes.docker, compute: fakes.compute,
     signer: createComputeSigner('test'), config: cfg, logger: nullLogger,
   });
-  app = createApp({ repos, service, config: cfg, logger: nullLogger, reconciler });
+  app = authed(createApp({ repos, service, config: cfg, logger: nullLogger, reconciler }));
 }
 
 async function seed(): Promise<{ projectId: string; endpointId: string; branchId: string }> {

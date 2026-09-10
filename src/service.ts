@@ -44,6 +44,8 @@ export interface CreateProjectInput {
   readonly roleName?: string;
   readonly databaseName?: string;
   readonly withEndpoint?: boolean;
+  /** Organization that owns the project (design 004). */
+  readonly orgId?: string;
 }
 
 export interface CreatedProject {
@@ -192,6 +194,7 @@ export function createService(deps: ServiceDeps): Service {
           default_branch_id: branchId,
           settings_json: JSON.stringify(input.settings ?? {}),
           annotation_json: JSON.stringify(input.annotation ?? {}),
+          org_id: input.orgId ?? null,
         });
 
         const branch = repos.branches.insert({

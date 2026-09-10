@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Context, Hono } from 'hono';
 import type { AppDeps, AppEnv } from '../app.ts';
-import { bearerAuth } from '../auth.ts';
+import { apiAuth } from '../auth.ts';
+import { registerConsoleAuthRoutes } from '../console-auth.ts';
 import type { DockerClient } from '../../adapters/docker.ts';
 import type { PageserverClient } from '../../adapters/pageserver.ts';
 import type { EndpointRow, OperationRow } from '../../store/rows.ts';
@@ -90,6 +91,9 @@ export function registerConsoleRoutes(app: Hono<AppEnv>, deps: AppDeps): void {
   const docker = deps.docker as DockerClient | undefined;
   const pageserver = deps.pageserver as PageserverClient | undefined;
 
+  // Login / OIDC / session endpoints on the same origin as the page.
+  registerConsoleAuthRoutes(app, deps);
+
   /**
    * Maps endpoint id -> container state. An empty map with `ok:false` means docker is unreachable.
    *
@@ -121,8 +125,8 @@ export function registerConsoleRoutes(app: Hono<AppEnv>, deps: AppDeps): void {
   app.get('/', servePage);
   app.get('/console', servePage);
 
-  // Same gate as /api/v2: the snapshot carries every project and endpoint in the stack.
-  app.get('/console/state', bearerAuth(repos), async (c) => {
+  // Same gate as /api/v2, but a browser session is accepted as well as a bearer key (design 004).
+  app.get('/console/state', apiAuth(repos), async (c) => {
     const containers = await containerStates();
     const projects = repos.projects.list(200);
 

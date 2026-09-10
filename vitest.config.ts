@@ -23,5 +23,11 @@ export default defineConfig({
         },
       },
     ],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: ['src/**/*.ts'],
+      exclude: ['src/console/**', 'src/store/migrations/**'],
+    },
   },
 });

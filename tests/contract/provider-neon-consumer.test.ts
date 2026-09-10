@@ -14,6 +14,7 @@ import { createComputeSigner } from '../../src/domain/compute-auth.ts';
 import { nullLogger } from '../../src/logger.ts';
 import type { Config } from '../../src/config.ts';
 import { fakeAdapters } from '../support/fakes.ts';
+import { authed, bootstrapForTest, testIdentity } from '../support/identity.ts';
 
 /**
  * T-109 / 002 §12.2 item 2: the rules `siteops-platform/packages/provider-neon` applies to every
@@ -47,15 +48,17 @@ beforeEach(() => {
     dockerSocket: '/var/run/docker.sock', dockerNetwork: 'neon-cp-test',
     computeVolumeRoot: join(workdir, 'computes'), portRange: [55500, 55520],
     routeMode: 'proxy', zone: 'db.siteops.localhost', proxyToken: undefined, validateResponses: true,
+    identity: testIdentity(),
   };
   const repos = createRepositories(openDatabase(':memory:'));
+  bootstrapForTest(repos, config.identity);
   const fakes = fakeAdapters();
   const service = createService({ repos, pageserver: fakes.pageserver, config, logger: nullLogger });
   const reconciler = createReconciler({
     repos, pageserver: fakes.pageserver, docker: fakes.docker, compute: fakes.compute,
     signer: createComputeSigner('test'), config, logger: nullLogger,
   });
-  app = createApp({ repos, service, config, logger: nullLogger, reconciler });
+  app = authed(createApp({ repos, service, config, logger: nullLogger, reconciler }));
   drain = () => reconciler.drain();
 });
 

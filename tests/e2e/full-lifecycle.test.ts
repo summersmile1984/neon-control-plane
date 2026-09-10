@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Hono } from 'hono';
 import { openDatabase } from '../../src/store/db.ts';
 import { createRepositories, type Repositories } from '../../src/store/repo.ts';
@@ -17,6 +17,7 @@ import { createDockerClient } from '../../src/adapters/docker.ts';
 import { createComputeClient } from '../../src/adapters/compute.ts';
 import { createLogger, nullLogger } from '../../src/logger.ts';
 import type { Config } from '../../src/config.ts';
+import { authed, bootstrapForTest, testIdentity } from '../support/identity.ts';
 
 /**
  * The whole control plane against the real storage layer and real compute containers
@@ -50,6 +51,7 @@ const config: Config = {
   zone: 'db.siteops.localhost',
   proxyToken: undefined,
   validateResponses: true,
+  identity: testIdentity(),
 };
 
 /** Runs psql inside the compute container: the image ships the client, the host may not. */
@@ -102,10 +104,11 @@ beforeAll(async () => {
   const signer = createComputeSigner('e2e');
   const compute = createComputeClient({ signer });
   repos = createRepositories(openDatabase(config.dbPath));
+  bootstrapForTest(repos, config.identity);
   const logger = process.env.CP_E2E_LOGS ? createLogger('debug') : nullLogger;
   const service = createService({ repos, pageserver, config, logger });
   reconciler = createReconciler({ repos, pageserver, docker, compute, signer, config, logger });
-  app = createApp({ repos, service, config, logger, reconciler });
+  app = authed(createApp({ repos, service, config, logger, reconciler }));
 }, 120_000);
 
 afterAll(async () => {
@@ -118,6 +121,10 @@ afterAll(async () => {
   }
   rmSync(workdir, { recursive: true, force: true });
 }, 300_000);
+
+beforeEach((context) => {
+  if (!reachable) context.skip(`pageserver at ${PAGESERVER_URL} unreachable; run pnpm compose:up`);
+});
 
 describe('control plane against the real Neon storage and compute', () => {
   it('creates a project whose compute really serves Postgres', async () => {

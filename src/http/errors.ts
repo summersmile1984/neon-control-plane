@@ -21,6 +21,9 @@ export const ERROR_CODES = {
   preconditionFailed: 'PRECONDITION_FAILED',
   runningOperations: 'RUNNING_OPERATIONS',
   notImplemented: 'NOT_IMPLEMENTED',
+  forbidden: 'FORBIDDEN',
+  orgNotFound: 'ORG_NOT_FOUND',
+  memberNotFound: 'MEMBER_NOT_FOUND',
   internal: 'INTERNAL_SERVER_ERROR',
 } as const;
 
@@ -55,6 +58,7 @@ export class ApiError extends Error {
 export const errors = {
   unauthorized: (message = 'API key is missing or invalid') => new ApiError(401, ERROR_CODES.authFailed, message),
   badRequest: (message: string) => new ApiError(400, ERROR_CODES.badRequest, message),
+  notFound: (what: string) => new ApiError(404, ERROR_CODES.notFound, `${what} was not found`),
   projectNotFound: (id: string) => new ApiError(404, ERROR_CODES.projectNotFound, `project ${id} was not found`),
   branchNotFound: (id: string) => new ApiError(404, ERROR_CODES.branchNotFound, `branch ${id} was not found`),
   endpointNotFound: (id: string) => new ApiError(404, ERROR_CODES.endpointNotFound, `endpoint ${id} was not found`),
@@ -68,5 +72,8 @@ export const errors = {
   runningOperations: (message = 'another operation is running on this resource') =>
     new ApiError(423, ERROR_CODES.runningOperations, message),
   notImplemented: (what: string) => new ApiError(501, ERROR_CODES.notImplemented, `${what} is not implemented`),
+  forbidden: (message = 'the credential is not allowed to perform this action') => new ApiError(403, ERROR_CODES.forbidden, message),
+  orgNotFound: (id: string) => new ApiError(404, ERROR_CODES.orgNotFound, `organization ${id} was not found`),
+  memberNotFound: (id: string) => new ApiError(404, ERROR_CODES.memberNotFound, `member ${id} was not found`),
   internal: (message = 'internal error') => new ApiError(500, ERROR_CODES.internal, message),
 } as const;

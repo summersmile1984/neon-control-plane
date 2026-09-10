@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PageserverError, createPageserverClient } from '../../src/adapters/pageserver.ts';
 import { generateHexId } from '../../src/domain/ids.ts';
 
@@ -32,6 +32,10 @@ afterAll(async () => {
     await client.deleteTimeline(tenantId, timeline).catch(() => undefined);
   }
   await client.deleteTenant(tenantId).catch(() => undefined);
+});
+
+beforeEach((context) => {
+  if (!reachable) context.skip(`pageserver at ${baseUrl} is not reachable; run pnpm compose:up`);
 });
 
 describe.skipIf(!process.env.CI && false)('pageserver adapter against a live stack', () => {

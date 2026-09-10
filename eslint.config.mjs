@@ -2,7 +2,7 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['node_modules/**', 'data/**', 'spec/neon-api-v2.json'] },
+  { ignores: ['node_modules/**', 'data/**', 'spec/neon-api-v2.json', 'coverage/**', 'test-results/**', 'playwright-report/**', 'blob-report/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

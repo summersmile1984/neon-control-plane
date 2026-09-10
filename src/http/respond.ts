@@ -33,3 +33,12 @@ export function respond<T>(c: Context, schemaName: string, body: T, status = 200
   assertValidBody(schemaName, body);
   return c.json(body as object, status as 200);
 }
+
+/**
+ * For endpoints whose response is a bare array (e.g. `GET /api_keys`): the spec types the array
+ * inline, so each element is validated against the item schema and the array is returned as-is.
+ */
+export function respondList<T>(c: Context, itemSchema: string, items: readonly T[], status = 200): Response {
+  for (const item of items) assertValidBody(itemSchema, item);
+  return c.json(items as unknown[] as object, status as 200);
+}

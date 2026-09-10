@@ -11,11 +11,11 @@ import { createApp, type AppEnv } from '../../src/http/app.ts';
 import { configureRespond } from '../../src/http/respond.ts';
 import { createReconciler, type Reconciler } from '../../src/reconciler/loop.ts';
 import { createComputeSigner } from '../../src/domain/compute-auth.ts';
-import { generateApiKey, hashApiKey } from '../../src/http/auth.ts';
 import { nullLogger } from '../../src/logger.ts';
 import type { Config } from '../../src/config.ts';
 import type { DockerClient } from '../../src/adapters/docker.ts';
 import { fakeAdapters, type FakeAdapters } from '../support/fakes.ts';
+import { authed, bootstrapForTest, testIdentity } from '../support/identity.ts';
 
 /**
  * The local operations console (`/console/state`). It is not part of the Neon contract, so it is
@@ -31,6 +31,7 @@ configureRespond({ validate: true });
 
 let repos: Repositories;
 let app: Hono<AppEnv>;
+let rawApp: Hono<AppEnv>;
 let reconciler: Reconciler;
 let fakes: FakeAdapters;
 
@@ -43,12 +44,14 @@ function config(): Config {
     computeVolumeRoot: join(workdir, 'computes'), portRange: [55600, 55620],
     routeMode: 'proxy', zone: 'db.siteops.localhost',
     proxyToken: undefined, validateResponses: true,
+    identity: testIdentity(),
   };
 }
 
 function build(docker?: DockerClient): void {
   const cfg = config();
   repos = createRepositories(openDatabase(':memory:'));
+  bootstrapForTest(repos, cfg.identity);
   fakes = fakeAdapters();
   const dockerClient = docker ?? fakes.docker;
   const service = createService({ repos, pageserver: fakes.pageserver, config: cfg, logger: nullLogger });
@@ -56,10 +59,11 @@ function build(docker?: DockerClient): void {
     repos, pageserver: fakes.pageserver, docker: dockerClient, compute: fakes.compute,
     signer: createComputeSigner('test'), config: cfg, logger: nullLogger,
   });
-  app = createApp({
+  rawApp = createApp({
     repos, service, config: cfg, logger: nullLogger, reconciler,
     docker: dockerClient, pageserver: fakes.pageserver,
   });
+  app = authed(rawApp);
 }
 
 interface Snapshot {
@@ -178,16 +182,15 @@ describe('local operations console', () => {
     expect(state.summary.drifting_endpoints).toBe(0);
   });
 
-  it('requires the API key once one exists, but still serves the page', async () => {
+  it('requires a credential for the snapshot but still serves the page', async () => {
     await seed();
-    const key = generateApiKey();
-    repos.apiKeys.insert({ id: 'k1', name: 'test', key_hash: hashApiKey(key) });
 
-    expect((await app.request('/console/state')).status).toBe(401);
-    expect((await app.request('/console/state', { headers: { authorization: 'Bearer wrong' } })).status).toBe(401);
-    expect((await snapshot({ authorization: `Bearer ${key}` })).summary.projects).toBe(1);
-    // The page itself is a shell with no data in it; it prompts for the key when the fetch 401s.
-    expect((await app.request('/console')).status).toBe(200);
+    // The raw app has no credential injected: the snapshot is refused, the page is not.
+    expect((await rawApp.request('/console/state')).status).toBe(401);
+    expect((await rawApp.request('/console/state', { headers: { authorization: 'Bearer wrong' } })).status).toBe(401);
+    expect((await snapshot()).summary.projects).toBe(1);
+    // The page itself is a shell with no data in it; it prompts for a login when the fetch 401s.
+    expect((await rawApp.request('/console')).status).toBe(200);
   });
 
   it('lists operations across every project, newest first', async () => {

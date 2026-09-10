@@ -54,18 +54,48 @@ pnpm verify                                # typecheck + lint + unit + contract
 pnpm spec:facts                            # 升级 spec/neon-api-v2.json 后先跑它
 ```
 
-跑全部 e2e 需要 proxy 与控制面都起着。宿主机 5432 常被本机 PostgreSQL 占用，所以 proxy 端口可配：
+跑全部 e2e 需要 proxy 与控制面都起着。宿主机 5432 常被本机 PostgreSQL 占用，所以 proxy 端口可配。控制面现在**始终要求鉴权**，所以还要给它播种一把 key，并把同一把 key 导出给测试：
 
 ```sh
 pnpm compose:up
 PROXY_PORT=5434 docker compose -f infra/compose/docker-compose.yml --profile proxy up -d proxy
-CP_ROUTE_MODE=proxy pnpm dev
-CP_PROXY_PORT=5434 pnpm test:e2e
+CP_ROUTE_MODE=proxy CP_BOOTSTRAP_API_KEY=napi_local_e2e_key CP_OWNER_PASSWORD=local-dev-password pnpm dev
+CP_API_KEY=napi_local_e2e_key CP_ROUTE_MODE=proxy CP_PROXY_PORT=5434 pnpm test:e2e
 ```
 
-前置条件缺失时用例**报跳过而不是报失败**：没起控制面、没起 proxy、`psql` 不在 PATH、没有 SiteOps 的 Caddy、本地没有 `siteops-directus-container` 镜像，都会打印原因后跳过。
+前置条件缺失时用例**报跳过而不是报失败**：没起控制面、`CP_API_KEY` 未设或不被接受（401）、没起 proxy、`psql` 不在 PATH、没有 SiteOps 的 Caddy、本地没有 `siteops-directus-container` 镜像，都会打印原因后跳过。
+
+浏览器端到端（Playwright）驱动真实控制台。它自己拉起一个独立端口的控制面和一个假 OIDC 提供方，所以**不会**和你正在跑的 `pnpm dev` 抢 8080：
+
+```sh
+pnpm test:browser                      # 登录/密钥/成员/项目/a11y，共 11 例
+CP_BROWSER_PORT=8090 pnpm test:browser # 自定义端口
+```
+
+登录、key 与成员用例只需 `pnpm dev` 能起；项目生命周期用例需要 `pnpm compose:up`（无 pageserver 时自动跳过）。项目用例以 `direct` 档起控制面，因此它会**用控制台发出的那串连接串在宿主机跑 DDL/DML**，并断言 pageserver 里真有该项目的 tenant + timeline——即"数据面最终效果"，而不只是 UI 状态。默认用系统 Chrome，`PW_CHANNEL=chromium` 可切到打包的浏览器。失败留 trace/截图在 `test-results/`。
+
+管理 API 侧的数据面最终效果由 `tests/e2e/data-plane.test.ts` 覆盖（建项目→pageserver tenant/timeline、库/角色存在、DDL/DML、事务回滚、连接串登录），随 `pnpm test:e2e` 一起跑。
+
+覆盖率（unit + contract，不含需要真实栈的 e2e/browser）：
+
+```sh
+pnpm test:coverage                     # 文本报告 + coverage/index.html
+```
 
 `.env` 里含空格的值必须加引号（`CP_PAGESERVER_CONNSTRING="host=pageserver port=6400"`），否则 compute 会卡在 `init`——配置加载会拒绝这种值。
+
+## 已实现的 API
+
+`spec/SUBSET.md` 列出的 30 条路径全部可用：projects、branches（含 `set_as_default`、`parent_timestamp`）、endpoints（含 start/suspend/restart）、databases、roles（含 `reset_password`、`reveal_password`）、`connection_uri`、operations；M5 补齐了鉴权与 key 管理面——`api_keys`（个人与组织/项目 scoped）、`/auth`、`/users/me`、`/users/me/organizations`、`organizations` 与成员。加 `/healthz`、`/readyz`。
+
+## 鉴权与 API key
+
+控制面**始终要求鉴权**（不再有"无 key 时放行"的窗口）。两种凭证：
+
+- **Bearer API key**：`Authorization: Bearer napi_...`。个人 key 可访问所属组织的项目（带 `org_id` 时校验成员关系）；组织 key 固定组织，项目 scoped key 只能访问绑定的那一个项目（访问其它项目返回 404，避免枚举）。只有组织 `admin` 能建组织/项目 key。token 只在创建时回显一次，库里只存 sha256。
+- **控制台会话 cookie**（`zenith`）：浏览器登录后签发，`/api/v2` 与 `/console/state` 同样接受。
+
+首启会从 env 播种一个 owner、一个组织和（可选）第一把 key：`CP_ORG_ID`（默认与 SiteOps 的 `NEON_ORGANIZATION_ID` 对齐）、`CP_OWNER_*`、`CP_BOOTSTRAP_API_KEY`。详见 `.env.example`。
 
 ## 本地运维 console
 
@@ -73,13 +103,9 @@ CP_PROXY_PORT=5434 pnpm test:e2e
 
 它回答的是 API 回答不了的那类问题：现在什么在跑、哪一步失败了、连接串是什么。一页里有栈健康度（pageserver / docker 可达性）、全部项目的分支/端点/角色/库、跨项目的操作流（含失败原因），以及**状态漂移**告警——SQLite 里的 endpoint 状态和 Docker 里的容器实际情况对不上时标红，这是本地栈出问题时最有用的一个信号，而它需要同时看两份状态才能判断，所以 v2 API 给不出来。
 
-页面上的每个动作（建项目、start / suspend / restart、删项目、取连接串）都打真正的 `/api/v2` 路由，所以 console 和 `provider-neon`、`neonctl` 走完全相同的合同。它挂在 `/api/v2` 之外，不属于 Neon 合同，别让任何客户端依赖它。
+页面还带一个登录门（邮箱+密码 / 一键 dev 登录 / OIDC）、个人与组织 key 的列表/创建/撤销，以及组织成员列表。页面上的每个数据动作（建项目、start / suspend / restart、删项目、取连接串、建 key、撤销 key）都打真正的 `/api/v2` 路由，所以 console 和 `provider-neon`、`neonctl` 走完全相同的合同。它挂在 `/api/v2` 之外，不属于 Neon 合同，别让任何客户端依赖它。
 
-快照里**没有口令**：只回"是否存了口令"，口令仍然只能经 `reveal_password` 对单个角色显式索取。页面是单文件、无构建、无 CDN，断网可用。建了 API key 之后，把 key 填到页面右上角。
-
-## 已实现的 API
-
-`spec/SUBSET.md` 列出的 20 条路径全部可用：projects、branches（含 `set_as_default`、`parent_timestamp`）、endpoints（含 start/suspend/restart）、databases、roles（含 `reset_password`、`reveal_password`）、`connection_uri`、operations。加 `/healthz`、`/readyz`。
+快照里**没有口令**：只回"是否存了口令"，口令仍然只能经 `reveal_password` 对单个角色显式索取。页面是单文件、无构建、无 CDN，断网可用。新 key 的明文只在创建时显示一次。
 
 连接路由三档：`direct`（把 compute 端口发布到宿主机，本机 psql 直接可连）、`proxy`（本地开发用这档）、`sni-router`（只保留代码，本地栈不提供路由器，见上）。后两档的 URI 省略端口并带 `sslmode=require&channel_binding=require`——这是 SiteOps 客户端解析所要求的形状。
 

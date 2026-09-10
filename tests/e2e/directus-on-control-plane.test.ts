@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   api, computeContainerRunning, createProject, endpointState,
   preflight, psqlThroughProxy, PROXY_PORT, settle, waitFor, type CreatedProject,
@@ -115,6 +115,10 @@ afterAll(async () => {
   execFileSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' });
   if (project) await api(`/projects/${project.projectId}`, { method: 'DELETE' }).catch(() => undefined);
 }, 180_000);
+
+beforeEach((context) => {
+  if (skipReason) context.skip(skipReason);
+});
 
 describe('Directus on a control-plane database', () => {
   it('completes its bootstrap migrations against the Neon compute', () => {

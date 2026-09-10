@@ -13,6 +13,7 @@ export interface ProjectRow {
   default_branch_id: string | null;
   settings_json: string;
   annotation_json: string;
+  org_id?: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -120,10 +121,59 @@ export interface OperationRow {
   updated_at: string;
 }
 
-export interface ApiKeyRow {
+/** Official MemberRole enum. Only `admin` may create org/project-scoped keys. */
+export type MemberRole = 'admin' | 'member' | 'editor' | 'viewer' | 'collaborator';
+
+export interface UserRow {
+  id: string;
+  email: string;
+  name: string;
+  last_name: string;
+  image: string;
+  password_hash: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizationRow {
   id: string;
   name: string;
+  handle: string;
+  plan: string;
+  managed_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemberRow {
+  id: string;
+  org_id: string;
+  user_id: string;
+  role: MemberRole;
+  joined_at: string;
+}
+
+export interface SessionRow {
+  id: string;
+  user_id: string;
+  created_at: string;
+  expires_at: string;
+  last_seen_at: string;
+}
+
+/** A key is either `user`-scoped (personal) or `org`-scoped (optionally bound to one project). */
+export type ApiKeyKind = 'user' | 'org';
+
+export interface ApiKeyRow {
+  id: number;
+  name: string;
   key_hash: string;
+  created_by: string | null;
   created_at: string;
   last_used_at: string | null;
+  last_used_from_addr: string | null;
+  revoked_at: string | null;
+  kind: ApiKeyKind;
+  org_id: string | null;
+  project_id: string | null;
 }

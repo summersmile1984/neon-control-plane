@@ -8,6 +8,7 @@ import {
   checkRequest, findBranch, findEndpoint, findProject, jsonBody, operationsView,
   optionalBoolean, optionalInteger, optionalString, section,
 } from './helpers.ts';
+import { principalOrgIds, resolveActingOrg } from '../guard.ts';
 
 /** `/projects`, `/projects/{id}`, operations and `connection_uri` (002 §4.1). */
 export function registerProjectRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
@@ -17,7 +18,11 @@ export function registerProjectRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
   api.get('/projects', (c) => {
     const limit = Math.min(Number(c.req.query('limit') ?? 100) || 100, 1000);
     const cursor = c.req.query('cursor');
-    const rows = repos.projects.list(limit, cursor);
+    const principal = c.get('principal');
+    const allowed = new Set(principalOrgIds(repos, principal, config));
+    const rows = repos.projects.list(limit, cursor).filter((row) => (principal.projectId
+      ? row.id === principal.projectId
+      : allowed.has(row.org_id ?? config.identity.orgId)));
     const body: Record<string, unknown> = { projects: rows.map((row) => projectListItemView(row, context)) };
     const last = rows.at(-1);
     if (last && rows.length === limit) body.pagination = { cursor: last.id };
@@ -40,6 +45,7 @@ export function registerProjectRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
       ...(optionalString(branch, 'name') === undefined ? {} : { branchName: optionalString(branch, 'name')! }),
       ...(optionalString(branch, 'role_name') === undefined ? {} : { roleName: optionalString(branch, 'role_name')! }),
       ...(optionalString(branch, 'database_name') === undefined ? {} : { databaseName: optionalString(branch, 'database_name')! }),
+      orgId: resolveActingOrg(repos, config, c.get('principal'), c.req.query('org_id')),
     });
 
     const connectionUris = created.endpoint

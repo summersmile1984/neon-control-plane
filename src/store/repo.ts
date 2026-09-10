@@ -1,8 +1,9 @@
 import type { Db } from './db.ts';
 import { now } from './db.ts';
 import type {
-  ApiKeyRow, BranchRow, BranchState, DatabaseRow, EndpointRow, EndpointState,
-  OperationAction, OperationRow, OperationStatus, ProjectRow, RoleRow,
+  ApiKeyKind, ApiKeyRow, BranchRow, BranchState, DatabaseRow, EndpointRow, EndpointState,
+  MemberRole, MemberRow, OperationAction, OperationRow, OperationStatus, OrganizationRow, ProjectRow,
+  RoleRow, SessionRow, UserRow,
 } from './rows.ts';
 
 /**
@@ -22,6 +23,10 @@ export interface Repositories {
   readonly databases: DatabaseRepo;
   readonly operations: OperationRepo;
   readonly apiKeys: ApiKeyRepo;
+  readonly users: UserRepo;
+  readonly organizations: OrganizationRepo;
+  readonly members: MemberRepo;
+  readonly sessions: SessionRepo;
   transaction<T>(fn: () => T): T;
 }
 
@@ -97,10 +102,52 @@ export interface OperationRepo {
 }
 
 export interface ApiKeyRepo {
-  insert(row: Omit<ApiKeyRow, 'created_at' | 'last_used_at'>): ApiKeyRow;
+  insert(row: {
+    name: string; key_hash: string; created_by?: string | null;
+    kind?: ApiKeyKind; org_id?: string | null; project_id?: string | null;
+  }): ApiKeyRow;
+  get(id: number): ApiKeyRow | undefined;
   findByHash(hash: string): ApiKeyRow | undefined;
-  touch(id: string): void;
+  listByUser(userId: string): ApiKeyRow[];
+  listByOrg(orgId: string): ApiKeyRow[];
+  revoke(id: number): ApiKeyRow | undefined;
+  touch(id: number, addr?: string): void;
   count(): number;
+}
+
+export interface UserRepo {
+  insert(row: Omit<UserRow, 'created_at' | 'updated_at'>): UserRow;
+  get(id: string): UserRow | undefined;
+  getByEmail(email: string): UserRow | undefined;
+  list(): UserRow[];
+  setPassword(id: string, hash: string): void;
+  count(): number;
+}
+
+export interface OrganizationRepo {
+  insert(row: Omit<OrganizationRow, 'created_at' | 'updated_at'>): OrganizationRow;
+  get(id: string): OrganizationRow | undefined;
+  list(): OrganizationRow[];
+  count(): number;
+}
+
+export interface MemberRepo {
+  insert(row: Omit<MemberRow, 'joined_at'>): MemberRow;
+  get(id: string): MemberRow | undefined;
+  getByUserAndOrg(userId: string, orgId: string): MemberRow | undefined;
+  listByOrg(orgId: string): MemberRow[];
+  listByUser(userId: string): MemberRow[];
+  setRole(id: string, role: MemberRole): MemberRow | undefined;
+  remove(id: string): boolean;
+  count(): number;
+}
+
+export interface SessionRepo {
+  insert(row: { id: string; user_id: string; expires_at: string }): SessionRow;
+  get(id: string): SessionRow | undefined;
+  touch(id: string): void;
+  remove(id: string): boolean;
+  removeExpired(nowIso: string): void;
 }
 
 const ACTIVE_STATUSES = "('scheduling','running')";
@@ -115,12 +162,12 @@ export function createRepositories(db: Db): Repositories {
       const ts = now();
       db.prepare(
         `INSERT INTO projects (id, tenant_id, name, pg_version, region_id, platform_id, provisioner, store_passwords,
-           history_retention_seconds, default_branch_id, settings_json, annotation_json, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           history_retention_seconds, default_branch_id, settings_json, annotation_json, org_id, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       ).run(
         row.id, row.tenant_id, row.name, row.pg_version, row.region_id, row.platform_id, row.provisioner,
         row.store_passwords, row.history_retention_seconds, row.default_branch_id, row.settings_json,
-        row.annotation_json, ts, ts,
+        row.annotation_json, row.org_id ?? null, ts, ts,
       );
       return projects.get(row.id) as ProjectRow;
     },
@@ -338,16 +385,90 @@ export function createRepositories(db: Db): Repositories {
 
   const apiKeys: ApiKeyRepo = {
     insert(row) {
-      db.prepare('INSERT INTO api_keys (id, name, key_hash, created_at) VALUES (?,?,?,?)').run(row.id, row.name, row.key_hash, now());
-      return one<ApiKeyRow>('SELECT * FROM api_keys WHERE id = ?', row.id) as ApiKeyRow;
+      const info = db.prepare(
+        `INSERT INTO api_keys (name, key_hash, created_by, created_at, kind, org_id, project_id)
+         VALUES (?,?,?,?,?,?,?)`,
+      ).run(row.name, row.key_hash, row.created_by ?? null, now(), row.kind ?? 'user', row.org_id ?? null, row.project_id ?? null);
+      return apiKeys.get(Number(info.lastInsertRowid)) as ApiKeyRow;
     },
-    findByHash: (hash) => one<ApiKeyRow>('SELECT * FROM api_keys WHERE key_hash = ?', hash),
-    touch: (id) => { run('UPDATE api_keys SET last_used_at = ? WHERE id = ?', now(), id); },
-    count: () => (one<{ total: number }>('SELECT COUNT(*) AS total FROM api_keys')?.total ?? 0),
+    get: (id) => one<ApiKeyRow>('SELECT * FROM api_keys WHERE id = ?', id),
+    findByHash: (hash) => one<ApiKeyRow>('SELECT * FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL', hash),
+    listByUser: (userId) => many<ApiKeyRow>(
+      "SELECT * FROM api_keys WHERE kind = 'user' AND created_by = ? AND revoked_at IS NULL ORDER BY id", userId,
+    ),
+    listByOrg: (orgId) => many<ApiKeyRow>(
+      "SELECT * FROM api_keys WHERE kind = 'org' AND org_id = ? AND revoked_at IS NULL ORDER BY id", orgId,
+    ),
+    revoke(id) {
+      run('UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL', now(), id);
+      return apiKeys.get(id);
+    },
+    touch(id, addr) {
+      run('UPDATE api_keys SET last_used_at = ?, last_used_from_addr = COALESCE(?, last_used_from_addr) WHERE id = ?', now(), addr ?? null, id);
+    },
+    count: () => (one<{ total: number }>('SELECT COUNT(*) AS total FROM api_keys WHERE revoked_at IS NULL')?.total ?? 0),
+  };
+
+  const users: UserRepo = {
+    insert(row) {
+      const ts = now();
+      db.prepare(
+        `INSERT INTO users (id, email, name, last_name, image, password_hash, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?)`,
+      ).run(row.id, row.email, row.name, row.last_name, row.image, row.password_hash, ts, ts);
+      return users.get(row.id) as UserRow;
+    },
+    get: (id) => one<UserRow>('SELECT * FROM users WHERE id = ?', id),
+    getByEmail: (email) => one<UserRow>('SELECT * FROM users WHERE lower(email) = lower(?)', email),
+    list: () => many<UserRow>('SELECT * FROM users ORDER BY created_at'),
+    setPassword(id, hash) { run('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?', hash, now(), id); },
+    count: () => (one<{ total: number }>('SELECT COUNT(*) AS total FROM users')?.total ?? 0),
+  };
+
+  const organizations: OrganizationRepo = {
+    insert(row) {
+      const ts = now();
+      db.prepare(
+        `INSERT INTO organizations (id, name, handle, plan, managed_by, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?)`,
+      ).run(row.id, row.name, row.handle, row.plan, row.managed_by, ts, ts);
+      return organizations.get(row.id) as OrganizationRow;
+    },
+    get: (id) => one<OrganizationRow>('SELECT * FROM organizations WHERE id = ?', id),
+    list: () => many<OrganizationRow>('SELECT * FROM organizations ORDER BY created_at'),
+    count: () => (one<{ total: number }>('SELECT COUNT(*) AS total FROM organizations')?.total ?? 0),
+  };
+
+  const members: MemberRepo = {
+    insert(row) {
+      db.prepare('INSERT INTO members (id, org_id, user_id, role, joined_at) VALUES (?,?,?,?,?)')
+        .run(row.id, row.org_id, row.user_id, row.role, now());
+      return members.get(row.id) as MemberRow;
+    },
+    get: (id) => one<MemberRow>('SELECT * FROM members WHERE id = ?', id),
+    getByUserAndOrg: (userId, orgId) => one<MemberRow>('SELECT * FROM members WHERE user_id = ? AND org_id = ?', userId, orgId),
+    listByOrg: (orgId) => many<MemberRow>('SELECT * FROM members WHERE org_id = ? ORDER BY joined_at', orgId),
+    listByUser: (userId) => many<MemberRow>('SELECT * FROM members WHERE user_id = ? ORDER BY joined_at', userId),
+    setRole(id, role) { run('UPDATE members SET role = ? WHERE id = ?', role, id); return members.get(id); },
+    remove: (id) => run('DELETE FROM members WHERE id = ?', id) > 0,
+    count: () => (one<{ total: number }>('SELECT COUNT(*) AS total FROM members')?.total ?? 0),
+  };
+
+  const sessions: SessionRepo = {
+    insert(row) {
+      db.prepare('INSERT INTO sessions (id, user_id, created_at, expires_at, last_seen_at) VALUES (?,?,?,?,?)')
+        .run(row.id, row.user_id, now(), row.expires_at, now());
+      return sessions.get(row.id) as SessionRow;
+    },
+    get: (id) => one<SessionRow>('SELECT * FROM sessions WHERE id = ?', id),
+    touch(id) { run('UPDATE sessions SET last_seen_at = ? WHERE id = ?', now(), id); },
+    remove: (id) => run('DELETE FROM sessions WHERE id = ?', id) > 0,
+    removeExpired(nowIso) { run('DELETE FROM sessions WHERE expires_at <= ?', nowIso); },
   };
 
   return {
     db, projects, branches, endpoints, roles, databases, operations, apiKeys,
+    users, organizations, members, sessions,
     transaction: <T>(fn: () => T): T => db.transaction(fn)(),
   };
 }

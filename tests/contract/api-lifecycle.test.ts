@@ -14,6 +14,7 @@ import { createComputeSigner } from '../../src/domain/compute-auth.ts';
 import { nullLogger } from '../../src/logger.ts';
 import type { Config } from '../../src/config.ts';
 import { fakeAdapters, type FakeAdapters } from '../support/fakes.ts';
+import { authed, bootstrapForTest, testIdentity } from '../support/identity.ts';
 
 /**
  * The whole API over stubbed adapters (002 §12.1 contract tier). Response validation is on, so
@@ -46,6 +47,7 @@ function makeConfig(): Config {
     zone: 'db.siteops.localhost',
     proxyToken: undefined,
     validateResponses: true,
+    identity: testIdentity(),
   };
 }
 
@@ -64,13 +66,14 @@ async function createProject(body: unknown = { project: { name: 'demo', pg_versi
 beforeEach(() => {
   const config = makeConfig();
   repos = createRepositories(openDatabase(':memory:'));
+  bootstrapForTest(repos, config.identity);
   fakes = fakeAdapters();
   const service = createService({ repos, pageserver: fakes.pageserver, config, logger: nullLogger });
   reconciler = createReconciler({
     repos, pageserver: fakes.pageserver, docker: fakes.docker, compute: fakes.compute,
     signer: createComputeSigner('test'), config, logger: nullLogger,
   });
-  app = createApp({ repos, service, config, logger: nullLogger, reconciler });
+  app = authed(createApp({ repos, service, config, logger: nullLogger, reconciler }));
 });
 
 afterAll(() => rmSync(workdir, { recursive: true, force: true }));

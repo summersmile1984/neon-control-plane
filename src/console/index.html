@@ -13,16 +13,16 @@
     --line: #dfe3e6;
     --ink: #1b2124;
     --ink-dim: #5d686e;
-    --ink-faint: #8b959b;
+    --ink-faint: #616b71;
     --accent: #0f6f6a;
     --accent-soft: #e2f0ef;
-    --ok: #1a7f4b;
+    --ok: #15703f;
     --ok-soft: #e3f3ea;
     --warn: #8a5a00;
     --warn-soft: #fbf0d9;
     --bad: #a32020;
     --bad-soft: #fbe6e6;
-    --idle: #6b7479;
+    --idle: #626a6f;
     --idle-soft: #eceff1;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
@@ -173,6 +173,21 @@
   }
   #toast.show { opacity: 1; }
   @media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
+
+  /* Login gate: the page shell is public, but every data fetch needs a session or a key. */
+  #login {
+    position: fixed; inset: 0; z-index: 50; padding: 20px;
+    background: rgba(10, 14, 16, .55); display: none; align-items: center; justify-content: center;
+  }
+  #login.show { display: flex; }
+  #login .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 20px; width: 380px; max-width: 100%; box-shadow: 0 12px 40px rgba(0,0,0,.3);
+  }
+  #login .field { display: grid; gap: 4px; margin-top: 12px; }
+  #login input { width: 100%; }
+  .keyrow { display: flex; gap: 8px; align-items: center; }
+  .keyrow input { flex: 1 1 auto; }
 </style>
 </head>
 <body>
@@ -181,11 +196,13 @@
   <h1>Neon 本地控制面<span id="mode"></span></h1>
   <div class="grow"></div>
   <div id="health" class="row"></div>
+  <span class="faint" id="who" style="font-size:11.5px"></span>
   <label class="row faint" style="font-size:12px">
     <input type="checkbox" id="auto" checked> 自动刷新
   </label>
   <button class="btn" id="refresh">刷新</button>
-  <input type="password" id="key" placeholder="API key（未建 key 时留空）" style="width:210px" autocomplete="off">
+  <button class="btn" id="loginBtn">登录</button>
+  <input type="password" id="key" placeholder="或粘贴 API key" style="width:180px" autocomplete="off">
 </header>
 
 <main>
@@ -215,11 +232,56 @@
     </div>
   </div>
 
-  <div class="card ops">
-    <div class="head"><h2>操作流</h2><div class="grow"></div><span class="faint" id="opsNote" style="font-size:11.5px"></span></div>
-    <div class="body" id="operations"></div>
+  <div class="stack">
+    <div class="card">
+      <div class="head">
+        <h2>API keys</h2>
+        <div class="grow"></div>
+        <input type="text" id="newKeyName" placeholder="key 名称" style="width:130px">
+        <button class="btn" id="createKey">建个人 key</button>
+      </div>
+      <div class="body stack" id="keys"></div>
+    </div>
+
+    <div class="card">
+      <div class="head">
+        <h2>组织成员</h2>
+        <div class="grow"></div>
+        <span class="faint" id="orgLabel" style="font-size:11.5px"></span>
+      </div>
+      <div class="body" id="members"></div>
+    </div>
+
+    <div class="card ops">
+      <div class="head"><h2>操作流</h2><div class="grow"></div><span class="faint" id="opsNote" style="font-size:11.5px"></span></div>
+      <div class="body" id="operations"></div>
+    </div>
   </div>
 </main>
+
+<div id="login" role="dialog" aria-modal="true">
+  <div class="panel">
+    <h2>登录控制面</h2>
+    <p class="faint" style="font-size:12px;margin:4px 0 0">本地控制面始终要求鉴权。用引导账号登录，或在右上角粘贴 API key。</p>
+    <form id="loginForm">
+      <div class="field" id="emailField">
+        <label class="faint" style="font-size:12px">邮箱</label>
+        <input type="text" id="loginEmail" autocomplete="username">
+      </div>
+      <div class="field" id="passwordField">
+        <label class="faint" style="font-size:12px">密码</label>
+        <input type="password" id="loginPassword" autocomplete="current-password">
+      </div>
+      <div class="row" style="margin-top:14px">
+        <button class="btn" type="submit" id="loginSubmit">登录</button>
+        <button class="btn" type="button" id="devLogin" style="display:none">一键 dev 登录</button>
+        <a id="oidcLogin" href="/console/oidc/start" style="display:none;margin-left:auto">用 OIDC 登录</a>
+      </div>
+    </form>
+    <p id="loginError" class="mono" style="color:var(--bad);font-size:12px;margin:10px 0 0"></p>
+    <p class="faint" style="font-size:11.5px;margin:10px 0 0"><a href="#" id="loginClose">关闭</a></p>
+  </div>
+</div>
 
 <div id="toast" role="status" aria-live="polite"></div>
 
@@ -297,7 +359,7 @@
     const headers = Object.assign({}, (init && init.headers) || {});
     if (key) headers.authorization = 'Bearer ' + key;
     if (init && init.body) headers['content-type'] = 'application/json';
-    const response = await fetch(path, Object.assign({}, init, { headers }));
+    const response = await fetch(path, Object.assign({ credentials: 'same-origin' }, init, { headers }));
     const text = await response.text();
     let body = null;
     try { body = text ? JSON.parse(text) : null; } catch { body = { message: text }; }
@@ -333,7 +395,7 @@
     box.replaceChildren(
       pill('pageserver ' + (health.pageserver.ok ? '可达' : '不可达'), health.pageserver.ok ? 'ok' : 'bad'),
       pill('docker ' + (health.docker.ok ? '可达' : '不可达'), health.docker.ok ? 'ok' : 'bad'),
-      pill(health.api_keys === 0 ? '未建 API key（开放）' : 'API key ' + health.api_keys + ' 把',
+      pill(health.api_keys === 0 ? '无 API key' : 'API key ' + health.api_keys + ' 把',
         health.api_keys === 0 ? 'warn' : 'info'),
     );
   }
@@ -563,15 +625,152 @@
       renderProjects(snapshot.projects);
       renderOperations(snapshot.operations);
       $('stamp').textContent = '更新于 ' + new Date(snapshot.generated_at).toLocaleTimeString();
+      hideLogin();
+      await loadIdentity();
+      await renderKeys();
+      await renderMembers();
     } catch (error) {
-      const hint = error.status === 401
-        ? '需要 API key，填到右上角那个输入框里。'
-        : '读不到控制面状态：' + error.message + '。控制面起了吗（pnpm dev）？';
-      $('alerts').replaceChildren(el('div', { class: 'banner', text: hint }));
+      if (error.status === 401) {
+        $('who').textContent = '';
+        showLogin();
+      } else {
+        $('alerts').replaceChildren(el('div', { class: 'banner', text: '读不到控制面状态：' + error.message + '。控制面起了吗（pnpm dev）？' }));
+      }
     } finally {
       inFlight = false;
     }
   }
+
+  // --- identity, keys and members -------------------------------------------------------------
+  let orgId = null;
+
+  async function loadIdentity() {
+    try {
+      const me = await api('/api/v2/users/me');
+      $('who').textContent = me.email;
+      const orgs = await api('/api/v2/users/me/organizations');
+      orgId = orgs.organizations && orgs.organizations[0] ? orgs.organizations[0].id : null;
+      $('orgLabel').textContent = orgId ? orgId : '';
+    } catch {
+      $('who').textContent = '';
+    }
+  }
+
+  function keyRow(kind, row, onRevoke) {
+    const when = row.last_used_at ? row.last_used_at.replace('T', ' ').replace(/\..*/, '') : '从未使用';
+    return el('div', { class: 'keyrow' }, [
+      el('div', { style: 'flex:1 1 auto;min-width:0' }, [
+        el('div', {}, [el('b', { text: row.name }), ' ', pill(kind, 'info')]),
+        el('div', { class: 'faint mono', style: 'font-size:11px', text: '#' + row.id + ' · 建于 ' + row.created_at + ' · ' + when }),
+      ]),
+      el('button', { class: 'btn danger', text: '撤销', onclick: onRevoke }),
+    ]);
+  }
+
+  let renderedKeys = '';
+  async function renderKeys() {
+    const host = $('keys');
+    const personal = await api('/api/v2/api_keys');
+    const org = orgId ? await api('/api/v2/organizations/' + encodeURIComponent(orgId) + '/api_keys') : [];
+    const signature = JSON.stringify([personal, org]);
+    if (signature === renderedKeys) return;
+    renderedKeys = signature;
+    const personalRows = personal.map((row) => keyRow('个人', row, () => actRevoke('/api/v2/api_keys/' + row.id)));
+    const orgRows = org.map((row) => keyRow('组织', row, () => actRevoke('/api/v2/organizations/' + encodeURIComponent(orgId) + '/api_keys/' + row.id)));
+    host.replaceChildren(
+      el('div', { class: 'faint', style: 'font-size:11.5px', text: '个人 key' }),
+      ...(personalRows.length ? personalRows : [el('div', { class: 'empty', text: '没有个人 key' })]),
+      el('div', { class: 'faint', style: 'font-size:11.5px;margin-top:8px', text: '组织 key' }),
+      ...(orgRows.length ? orgRows : [el('div', { class: 'empty', text: '没有组织 key' })]),
+    );
+  }
+
+  async function actRevoke(path) {
+    if (!confirm('撤销这把 key？撤销后立即失效。')) return;
+    await api(path, { method: 'DELETE' });
+    renderedKeys = '';
+    toast('已撤销');
+    await renderKeys();
+  }
+
+  function showToken(value) {
+    $('keys').prepend(el('div', { class: 'secret' }, [
+      el('p', { text: '这是新 key 的明文，只显示这一次，现在复制保存。' }),
+      el('textarea', { rows: '2', readonly: 'readonly', onclick: (e) => e.target.select() }, value),
+      el('div', { class: 'row', style: 'margin-top:6px' }, [el('button', { class: 'btn', text: '复制', onclick: () => copy(value) })]),
+    ]));
+  }
+
+  let renderedMembers = '';
+  async function renderMembers() {
+    if (!orgId) { $('members').replaceChildren(el('div', { class: 'empty', text: '没有组织' })); return; }
+    const body = await api('/api/v2/organizations/' + encodeURIComponent(orgId) + '/members');
+    const signature = JSON.stringify(body);
+    if (signature === renderedMembers) return;
+    renderedMembers = signature;
+    $('members').replaceChildren(el('table', {}, [
+      el('thead', {}, el('tr', {}, [el('th', { text: '邮箱' }), el('th', { text: '角色' })])),
+      el('tbody', {}, body.members.map((entry) => el('tr', {}, [
+        el('td', { text: entry.user.email }),
+        el('td', {}, pill(entry.member.role, entry.member.role === 'admin' ? 'ok' : 'idle')),
+      ]))),
+    ]));
+  }
+
+  // --- login ---------------------------------------------------------------------------------
+  function showLogin() { $('login').classList.add('show'); }
+  function hideLogin() { $('login').classList.remove('show'); $('loginError').textContent = ''; }
+
+  async function initAuth() {
+    try {
+      const config = await (await fetch('/console/config')).json();
+      $('devLogin').style.display = config.dev_login ? '' : 'none';
+      $('oidcLogin').style.display = config.oidc && config.oidc.enabled ? '' : 'none';
+      $('emailField').style.display = config.password_login ? '' : 'none';
+      $('passwordField').style.display = config.password_login ? '' : 'none';
+      $('loginSubmit').style.display = config.password_login ? '' : 'none';
+    } catch { /* config is best effort; the manual key field still works */ }
+  }
+
+  async function refreshSession() {
+    try {
+      const session = await api('/console/session');
+      if (session.authenticated) { hideLogin(); return true; }
+    } catch { /* fall through to login */ }
+    return false;
+  }
+
+  $('loginBtn').addEventListener('click', showLogin);
+  $('loginClose').addEventListener('click', (e) => { e.preventDefault(); hideLogin(); });
+  $('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('loginError').textContent = '';
+    try {
+      await api('/console/login', { method: 'POST', body: JSON.stringify({ email: $('loginEmail').value.trim(), password: $('loginPassword').value }) });
+      hideLogin();
+      await load();
+    } catch (error) { $('loginError').textContent = error.message; }
+  });
+  $('devLogin').addEventListener('click', async () => {
+    $('loginError').textContent = '';
+    try {
+      await api('/console/dev-login', { method: 'POST' });
+      hideLogin();
+      await load();
+    } catch (error) { $('loginError').textContent = error.message; }
+  });
+
+  $('createKey').addEventListener('click', () => {
+    const button = $('createKey');
+    const name = $('newKeyName').value.trim() || 'key-' + Math.random().toString(36).slice(2, 7);
+    act(button, '建 key', async () => {
+      const created = await api('/api/v2/api_keys', { method: 'POST', body: JSON.stringify({ key_name: name }) });
+      $('newKeyName').value = '';
+      renderedKeys = '';
+      await renderKeys();
+      showToken(created.key);
+    });
+  });
 
   $('refresh').addEventListener('click', load);
   $('create').addEventListener('click', () => {
@@ -590,7 +789,12 @@
     if ($('auto').checked && !document.hidden) load();
   }, REFRESH_MS);
 
-  load();
+  (async () => {
+    await initAuth();
+    await refreshSession();
+    if (!keyInput.value.trim()) showLogin();
+    load();
+  })();
 })();
 </script>
 </body>

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { lookup } from 'node:dns/promises';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   api, computeContainerRunning, createProject, endpointState, preflight,
   psqlThroughProxy, PROXY_PORT, settle, ZONE, type CreatedProject,
@@ -42,6 +42,10 @@ beforeAll(async () => {
 afterAll(async () => {
   if (project) await api(`/projects/${project.projectId}`, { method: 'DELETE' }).catch(() => undefined);
 }, 120_000);
+
+beforeEach((context) => {
+  if (skipReason) context.skip(skipReason);
+});
 
 describe('psql through the official Neon proxy', () => {
   it('serves Postgres through the proxy, addressed by startup option', () => {

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   api, computeContainerRunning, createProject, endpointState,
   preflight, psqlThroughProxy, settle, waitFor, type CreatedProject,
@@ -52,6 +52,10 @@ afterAll(async () => {
     if (project) await api(`/projects/${project.projectId}`, { method: 'DELETE' }).catch(() => undefined);
   }
 }, 180_000);
+
+beforeEach((context) => {
+  if (skipReason) context.skip(skipReason);
+});
 
 describe('two tenants on one local stack', () => {
   it('gives each project its own tenant, timeline, endpoint and compute container', async () => {

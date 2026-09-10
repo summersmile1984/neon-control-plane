@@ -16,6 +16,18 @@ const spec = JSON.parse(readFileSync(new URL('../../spec/neon-api-v2.json', impo
 
 /** path -> methods the control plane implements. Mirrors spec/SUBSET.md. */
 const SUBSET: Record<string, string[]> = {
+  // identity and API keys (design 004)
+  '/api_keys': ['get', 'post'],
+  '/api_keys/{key_id}': ['delete'],
+  '/organizations/{org_id}/api_keys': ['get', 'post'],
+  '/organizations/{org_id}/api_keys/{key_id}': ['delete'],
+  '/auth': ['get'],
+  '/users/me': ['get'],
+  '/users/me/organizations': ['get'],
+  '/organizations/{org_id}': ['get'],
+  '/organizations/{org_id}/members': ['get'],
+  '/organizations/{org_id}/members/{member_id}': ['get', 'patch', 'delete'],
+  // resources
   '/projects': ['get', 'post'],
   '/projects/{project_id}': ['get', 'patch', 'delete'],
   '/projects/{project_id}/operations': ['get'],

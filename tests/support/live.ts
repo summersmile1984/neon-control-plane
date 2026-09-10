@@ -14,6 +14,7 @@ import { connect } from 'node:net';
 export const BASE = process.env.CP_BASE_URL ?? 'http://127.0.0.1:8080';
 export const PROXY_PORT = Number(process.env.CP_PROXY_PORT ?? 5434);
 export const ZONE = process.env.CP_ZONE ?? 'db.siteops.localhost';
+export const ORG_ID = process.env.CP_ORG_ID;
 
 const API_KEY = process.env.CP_API_KEY;
 const headers = { 'content-type': 'application/json', ...(API_KEY ? { authorization: `Bearer ${API_KEY}` } : {}) };
@@ -56,6 +57,9 @@ export async function preflight(): Promise<string | undefined> {
   } catch (error) {
     return `control plane at ${BASE}: ${(error as Error).message}`;
   }
+  // The control plane always requires auth now; a missing or unseeded key is a skip, not a failure.
+  const auth = await authProbe();
+  if (auth) return auth;
   if (!(await tcpOpen(PROXY_PORT))) {
     return `no proxy on 127.0.0.1:${PROXY_PORT}; run PROXY_PORT=${PROXY_PORT} docker compose --profile proxy up -d proxy`;
   }
@@ -67,8 +71,27 @@ export async function preflight(): Promise<string | undefined> {
   return undefined;
 }
 
+/**
+ * Probe the configured API key against a protected endpoint. Returns a skip reason when the key is
+ * absent or rejected, so a developer who has not seeded `CP_BOOTSTRAP_API_KEY` sees "not run".
+ */
+export async function authProbe(): Promise<string | undefined> {
+  if (!API_KEY) {
+    return 'CP_API_KEY is not set; start the control plane with CP_BOOTSTRAP_API_KEY=<key> and export the same value as CP_API_KEY';
+  }
+  try {
+    const response = await fetch(`${BASE}/api/v2/users/me`, { headers: { authorization: `Bearer ${API_KEY}` } });
+    if (response.status === 401) return 'CP_API_KEY was rejected (401); seed it via CP_BOOTSTRAP_API_KEY or the console';
+    if (!response.ok) return `authenticated probe failed with ${response.status}`;
+  } catch (error) {
+    return `authenticated probe failed: ${(error as Error).message}`;
+  }
+  return undefined;
+}
+
 export async function createProject(name: string): Promise<CreatedProject> {
-  const created = await api('/projects', { method: 'POST', body: JSON.stringify({ project: { name, pg_version: 17 } }) });
+  const query = ORG_ID ? `?org_id=${encodeURIComponent(ORG_ID)}` : '';
+  const created = await api(`/projects${query}`, { method: 'POST', body: JSON.stringify({ project: { name, pg_version: 17 } }) });
   const parameters = (created.connection_uris as Array<{ connection_parameters: ConnectionParameters }>)[0]!.connection_parameters;
   return {
     projectId: (created.project as { id: string }).id,

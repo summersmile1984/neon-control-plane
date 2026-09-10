@@ -13,6 +13,7 @@ import { createService } from './service.ts';
 import { createReconciler } from './reconciler/loop.ts';
 import { createApp } from './http/app.ts';
 import { configureRespond } from './http/respond.ts';
+import { bootstrapIdentity } from './domain/bootstrap.ts';
 
 /**
  * Process entry point (002 §2): config -> db -> adapters -> service -> app -> reconciler.
@@ -42,6 +43,7 @@ export async function main(): Promise<void> {
 
   const db = openDatabase(config.dbPath);
   const repos = createRepositories(db);
+  bootstrapIdentity(repos, config.identity, logger);
   const signer = resolveSigner(join(dirname(config.dbPath), 'compute-signing-key.pem'), logger);
 
   const pageserver = createPageserverClient({ baseUrl: config.pageserverUrl });

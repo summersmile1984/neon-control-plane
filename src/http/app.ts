@@ -7,14 +7,21 @@ import type { Service } from '../service.ts';
 import type { Reconciler } from '../reconciler/loop.ts';
 import type { ViewContext } from '../domain/views.ts';
 import { ApiError, errors } from './errors.ts';
-import { bearerAuth } from './auth.ts';
+import { apiAuth } from './auth.ts';
+import { orgGuard, projectGuard } from './guard.ts';
 import { registerProjectRoutes } from './routes/projects.ts';
 import { registerBranchRoutes } from './routes/branches.ts';
 import { registerEndpointRoutes } from './routes/endpoints.ts';
+import { registerApiKeyRoutes } from './routes/api-keys.ts';
+import { registerIdentityRoutes } from './routes/identity.ts';
+import { registerOrganizationRoutes } from './routes/organizations.ts';
 import { cplaneErrorBody, isCplanePath, registerCplaneRoutes } from './routes/cplane.ts';
 import { registerConsoleRoutes } from './routes/console.ts';
 import type { DockerClient } from '../adapters/docker.ts';
 import type { PageserverClient } from '../adapters/pageserver.ts';
+import type { AppEnv } from './env.ts';
+
+export type { AppEnv };
 
 export interface AppDeps {
   readonly repos: Repositories;
@@ -27,15 +34,12 @@ export interface AppDeps {
   readonly pageserver?: PageserverClient;
 }
 
-export type AppEnv = { Variables: { requestId: string; apiKeyId?: string } };
-
 export function viewContext(config: Config): ViewContext {
-  return { zone: config.zone, creationSource: 'neon-control-plane', ownerId: 'org-local' };
+  return { zone: config.zone, creationSource: 'neon-control-plane', ownerId: config.identity.orgId };
 }
 
 export function createApp(deps: AppDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
-  let warnedOpen = false;
 
   app.use('*', async (c, next) => {
     const requestId = c.req.header('x-request-id') ?? randomUUID();
@@ -75,12 +79,18 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   });
 
   const api = new Hono<AppEnv>();
-  api.use('*', bearerAuth(deps.repos, () => {
-    if (warnedOpen) return;
-    warnedOpen = true;
-    deps.logger.warn('no API keys exist yet: the control plane is answering unauthenticated requests');
-  }));
+  api.use('*', apiAuth(deps.repos));
 
+  // Scope guards run before any project/organization handler: a credential may only reach the
+  // resources its key or session is entitled to see (design 004).
+  api.use('/projects/:project_id', projectGuard(deps.repos, deps.config));
+  api.use('/projects/:project_id/*', projectGuard(deps.repos, deps.config));
+  api.use('/organizations/:org_id', orgGuard(deps.repos));
+  api.use('/organizations/:org_id/*', orgGuard(deps.repos));
+
+  registerIdentityRoutes(api, deps);
+  registerApiKeyRoutes(api, deps);
+  registerOrganizationRoutes(api, deps);
   registerProjectRoutes(api, deps);
   registerBranchRoutes(api, deps);
   registerEndpointRoutes(api, deps);

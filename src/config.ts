@@ -1,6 +1,35 @@
 import { parseMasterKey } from './domain/secrets.ts';
 import type { RouteMode } from './domain/connection-uri.ts';
 
+/** Optional generic OIDC console login (design 004). Configured only when an issuer is present. */
+export interface OidcConfig {
+  readonly issuer: string;
+  readonly clientId: string;
+  readonly clientSecret: string | undefined;
+  readonly redirectUri: string;
+  readonly scopes: string;
+}
+
+/**
+ * Identity/bootstrap material (design 004). The control plane always requires auth; a fresh install
+ * seeds exactly one owner user in one organization and, if `CP_BOOTSTRAP_API_KEY` is set, a personal
+ * key for it, so a client can authenticate without touching the database by hand.
+ */
+export interface IdentityConfig {
+  readonly ownerId: string;
+  readonly ownerEmail: string;
+  readonly ownerName: string;
+  readonly ownerLastName: string;
+  readonly ownerPassword: string | undefined;
+  readonly orgId: string;
+  readonly orgName: string;
+  readonly keyPrefix: string;
+  readonly sessionTtlSeconds: number;
+  readonly devLogin: boolean;
+  readonly bootstrapApiKey: string | undefined;
+  readonly oidc: OidcConfig | undefined;
+}
+
 /** Process configuration (002 §11). Fails fast: a bad value must not surface as a runtime 500. */
 export interface Config {
   readonly port: number;
@@ -19,6 +48,7 @@ export interface Config {
   readonly zone: string;
   readonly proxyToken: string | undefined;
   readonly validateResponses: boolean;
+  readonly identity: IdentityConfig;
 }
 
 type Env = Record<string, string | undefined>;
@@ -67,6 +97,42 @@ function portRange(value: string): [number, number] {
   return [low, high];
 }
 
+function boolean(env: Env, key: string, fallback: boolean): boolean {
+  const raw = env[key]?.trim();
+  if (raw === undefined || raw === '') return fallback;
+  if (raw === '1' || raw.toLowerCase() === 'true') return true;
+  if (raw === '0' || raw.toLowerCase() === 'false') return false;
+  throw new Error(`${key} must be 0/1 or true/false`);
+}
+
+function loadIdentity(env: Env): IdentityConfig {
+  const issuer = env.CP_OIDC_ISSUER?.trim();
+  const oidc: OidcConfig | undefined = issuer
+    ? {
+      issuer: issuer.replace(/\/+$/, ''),
+      clientId: required(env, 'CP_OIDC_CLIENT_ID'),
+      clientSecret: env.CP_OIDC_CLIENT_SECRET?.trim() || undefined,
+      redirectUri: optional(env, 'CP_OIDC_REDIRECT_URI', 'http://localhost:8080/console/oidc/callback'),
+      scopes: optional(env, 'CP_OIDC_SCOPES', 'openid email profile'),
+    }
+    : undefined;
+
+  return {
+    ownerId: optional(env, 'CP_OWNER_ID', '00000000-0000-0000-0000-000000000001'),
+    ownerEmail: optional(env, 'CP_OWNER_EMAIL', 'owner@neon.localhost'),
+    ownerName: optional(env, 'CP_OWNER_NAME', 'Local Owner'),
+    ownerLastName: optional(env, 'CP_OWNER_LAST_NAME', ''),
+    ownerPassword: env.CP_OWNER_PASSWORD?.trim() || undefined,
+    orgId: optional(env, 'CP_ORG_ID', 'org-local-000000000001'),
+    orgName: optional(env, 'CP_ORG_NAME', 'Local Organization'),
+    keyPrefix: optional(env, 'CP_KEY_PREFIX', 'napi_'),
+    sessionTtlSeconds: integer(env, 'CP_SESSION_TTL_SECONDS', 60 * 60 * 24 * 30),
+    devLogin: boolean(env, 'CP_DEV_LOGIN', false),
+    bootstrapApiKey: env.CP_BOOTSTRAP_API_KEY?.trim() || undefined,
+    oidc,
+  };
+}
+
 export function loadConfig(env: Env = process.env): Config {
   return {
     port: integer(env, 'CP_PORT', 8080),
@@ -85,5 +151,6 @@ export function loadConfig(env: Env = process.env): Config {
     zone: optional(env, 'CP_ZONE', 'db.siteops.localhost'),
     proxyToken: env.CP_PROXY_TOKEN?.trim() || undefined,
     validateResponses: optional(env, 'CP_VALIDATE_RESPONSES', '1') === '1',
+    identity: loadIdentity(env),
   };
 }
