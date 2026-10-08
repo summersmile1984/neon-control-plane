@@ -4,7 +4,7 @@
 
 > **非 Neon 官方项目。** Neon 源码为 Apache-2.0，"Neon" 是其商标。本项目只用于本地开发环境，不面向生产自托管。
 
-本目录属于 [Site Growth 单仓](../README.md)，不是独立 Git 克隆；以下 `pnpm` 和 Compose 命令均从 `neon-control-plane/` 执行，保留本目录独立锁文件。不要复制旧仓 `.git` 或把 `compose:down` 当作安全停机命令。
+本项目是独立的 Git 克隆（Apache-2.0），与 Site Growth 单仓平级存放；以下 `pnpm` 和 Compose 命令均从仓库根目录执行，保留本仓库独立锁文件。SiteOps 侧的接线（Caddy、provider、workerd 探针）属于 [Site Growth 单仓](https://github.com/summersmile1984/siteops-monorepo)，不在本仓库范围内。不要把 `compose:down` 当作安全停机命令——它会删除卷。
 
 ---
 
@@ -381,6 +381,8 @@ CP_API_KEY=napi_local_e2e_key CP_ROUTE_MODE=proxy CP_PROXY_PORT=5434 pnpm test:e
 | `directus-on-control-plane` | Directus 迁移落在控制面起的 compute；挂起后下一请求恢复 |
 
 前置条件缺失时用例**报跳过而不是失败**（`context.skip(reason)`）：没起控制面、`CP_API_KEY` 未设或 401、没起 proxy、`psql` 不在 PATH、没有 SiteOps Caddy、没有 `siteops-directus-container` 镜像。
+
+`siteops-provider` 还需要一份 SiteOps 检出。默认在同级目录找 `site-growth/siteops-platform`；放在别处时用 `SITEOPS_PLATFORM_DIR` 指定它的绝对路径。
 
 ### 浏览器（console E2E）
 
