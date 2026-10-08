@@ -27,7 +27,7 @@ const branchRow: BranchRow = {
 };
 
 const endpointRow: EndpointRow = {
-  id: 'ep-quiet-river-a1b2c3d4', project_id: projectRow.id, branch_id: branchRow.id, type: 'read_write',
+  id: 'ep-quiet-river-a1b2c3d4', project_id: projectRow.id, branch_id: branchRow.id, name: 'analytics', type: 'read_write',
   current_state: 'active', pending_state: null, host: 'ep-quiet-river-a1b2c3d4.db.siteops.localhost',
   container_id: 'abc', pg_port: 55501, http_port: 55601, suspend_timeout_seconds: 300,
   autoscaling_min_cu: 0.25, autoscaling_max_cu: 0.25, settings_json: '{}', disabled: 0,

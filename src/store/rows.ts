@@ -48,6 +48,8 @@ export interface EndpointRow {
   id: string;
   project_id: string;
   branch_id: string;
+  /** Official `Endpoint.name`: optional, 1..64 characters. */
+  name: string | null;
   type: EndpointType;
   current_state: EndpointState;
   pending_state: EndpointState | null;

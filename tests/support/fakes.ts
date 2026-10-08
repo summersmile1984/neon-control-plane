@@ -12,7 +12,7 @@ import type { ComputeSpecEnvelope } from '../../src/domain/spec-builder.ts';
 export interface FakeState {
   tenants: Set<string>;
   timelines: Map<string, { tenant: string; ancestor?: string; ancestorLsn?: string }>;
-  containers: Map<string, { id: string; running: boolean; labels: Record<string, string> }>;
+  containers: Map<string, { id: string; running: boolean; labels: Record<string, string>; publishedPorts?: number[] }>;
   specs: ComputeSpecEnvelope[];
   configureCalls: Array<{ computeId: string; spec: ComputeSpecEnvelope }>;
   createCalls: number;
@@ -110,7 +110,9 @@ export function fakeAdapters(): FakeAdapters {
       if (existing) return { id: existing.id, created: false };
       state.createCalls += 1;
       const id = `container_${spec.name}`;
-      state.containers.set(spec.name, { id, running: false, labels: { ...spec.labels } });
+      state.containers.set(spec.name, {
+        id, running: false, labels: { ...spec.labels }, publishedPorts: Object.values(spec.portBindings),
+      });
       return { id, created: true };
     },
     startContainer: async (idOrName) => {
@@ -133,6 +135,13 @@ export function fakeAdapters(): FakeAdapters {
     listByLabel: async (label, value) => [...state.containers.keys()]
       .map((name) => info(name)!)
       .filter((container) => (value === undefined ? label in container.labels : container.labels[label] === value)),
+    publishedPorts: async () => {
+      const ports = new Map<number, string>();
+      for (const [name, container] of state.containers) {
+        for (const port of container.publishedPorts ?? []) ports.set(port, name);
+      }
+      return ports;
+    },
     logs: async () => '',
   };
 

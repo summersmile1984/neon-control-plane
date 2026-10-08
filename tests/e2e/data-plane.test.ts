@@ -131,6 +131,9 @@ afterAll(async () => {
   for (const projectId of createdProjects) {
     try {
       await app.request(`/api/v2/projects/${projectId}`, { method: 'DELETE' });
+      // Nothing drains this in-process reconciler on a timer, so the delete would only queue the
+      // tenant_detach operation and leave the compute container holding its published ports.
+      await reconciler.drain();
     } catch { /* best effort */ }
   }
   rmSync(workdir, { recursive: true, force: true });

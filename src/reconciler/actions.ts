@@ -76,6 +76,16 @@ const startCompute: OperationStep[] = [
     const endpoint = requireEndpoint(context, String(context.payload.endpoint_id));
     const project = requireProject(context, endpoint.project_id);
     await context.docker.ensureNetwork(context.config.dockerNetwork);
+    // Docker silently drops a published port another container already holds. The compute would
+    // come up unroutable and `await_ready` would then poll whatever *else* answers on that port —
+    // another instance's compute, which rejects our token. Refuse before that happens.
+    const held = await context.docker.publishedPorts();
+    for (const port of [endpoint.pg_port, endpoint.http_port]) {
+      const holder = held.get(port);
+      if (holder !== undefined && holder !== endpoint.id) {
+        throw new Error(`host port ${port} is published by container ${holder}; remove it or widen CP_PORT_RANGE`);
+      }
+    }
     const created = await context.docker.createContainer({
       name: endpoint.id,
       image: `${context.config.computeImageRepo}/compute-node-v${project.pg_version}:${context.config.neonTag}`,

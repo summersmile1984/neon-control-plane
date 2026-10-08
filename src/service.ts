@@ -79,7 +79,7 @@ export interface Service {
   deleteProject(projectId: string): OperationRow;
   createBranch(projectId: string, input: CreateBranchInput): Promise<CreatedBranch>;
   deleteBranch(projectId: string, branchId: string): OperationRow;
-  createEndpoint(projectId: string, branchId: string, type: EndpointType, suspendTimeoutSeconds?: number): { endpoint: EndpointRow; operations: OperationRow[] };
+  createEndpoint(projectId: string, branchId: string, type: EndpointType, suspendTimeoutSeconds?: number, name?: string | null): { endpoint: EndpointRow; operations: OperationRow[] };
   deleteEndpoint(endpoint: EndpointRow): OperationRow[];
   startEndpoint(endpoint: EndpointRow): OperationRow;
   suspendEndpoint(endpoint: EndpointRow): OperationRow;
@@ -122,13 +122,14 @@ export function createService(deps: ServiceDeps): Service {
     })];
   }
 
-  function newEndpointRow(project: ProjectRow, branch: BranchRow, type: EndpointType, suspendTimeoutSeconds: number): EndpointRow {
+  function newEndpointRow(project: ProjectRow, branch: BranchRow, type: EndpointType, suspendTimeoutSeconds: number, name: string | null = null): EndpointRow {
     const id = generateEndpointId();
     const ports = allocatePorts();
     return repos.endpoints.insert({
       id,
       project_id: project.id,
       branch_id: branch.id,
+      name,
       type,
       current_state: 'init',
       host: endpointHost(config.routeMode, config.zone, id),
@@ -323,7 +324,7 @@ export function createService(deps: ServiceDeps): Service {
       });
     },
 
-    createEndpoint(projectId, branchId, type, suspendTimeoutSeconds) {
+    createEndpoint(projectId, branchId, type, suspendTimeoutSeconds, name) {
       const project = repos.projects.get(projectId);
       if (!project) throw errors.projectNotFound(projectId);
       const branch = repos.branches.get(branchId);
@@ -332,7 +333,7 @@ export function createService(deps: ServiceDeps): Service {
         throw errors.alreadyExists(`a read_write endpoint on branch ${branch.id}`);
       }
       return repos.transaction(() => {
-        const endpoint = newEndpointRow(project, branch, type, suspendTimeoutSeconds ?? DEFAULT_SUSPEND_TIMEOUT_SECONDS);
+        const endpoint = newEndpointRow(project, branch, type, suspendTimeoutSeconds ?? DEFAULT_SUSPEND_TIMEOUT_SECONDS, name ?? null);
         const operations = [repos.operations.insert({
           id: generateOperationId(), project_id: project.id, branch_id: branch.id, endpoint_id: endpoint.id,
           action: 'start_compute', payload: { endpoint_id: endpoint.id },

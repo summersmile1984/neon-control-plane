@@ -1,6 +1,6 @@
 # 实现子集
 
-相对官方 spec `neon-api-v2.json`（OpenAPI 3.0.3，120 条路径）实现 30 条；"SiteOps 使用"指 `packages/provider-neon` / `apps/neon-provider-service` 当前调用的路径。
+相对官方 spec `neon-api-v2.json`（OpenAPI 3.0.3，122 条路径）实现 30 条；"SiteOps 使用"指 `packages/provider-neon` / `apps/neon-provider-service` 当前调用的路径。
 
 M5（design 004）补齐了鉴权与 API key 管理面：`/api_keys`、组织/项目 scoped key、`/auth`、`/users/me`、`/organizations` 与成员，均按官方 schema 校验。
 

@@ -27,14 +27,15 @@ function legacyDatabase(): Database.Database {
   return db;
 }
 
-describe('migration 0001 -> 0002', () => {
-  it('applies only 0002 and preserves legacy projects', () => {
+describe('upgrading a database that only has 0001 applied', () => {
+  it('applies every later migration and preserves legacy projects', () => {
     const db = legacyDatabase();
-    const ran = migrate(db);
-    expect(ran).toEqual(['0002_identity_keys.sql']);
+    migrate(db);
 
     const columns = (db.prepare('PRAGMA table_info(projects)').all() as Array<{ name: string }>).map((row) => row.name);
     expect(columns).toContain('org_id');
+    const endpointColumns = (db.prepare('PRAGMA table_info(endpoints)').all() as Array<{ name: string }>).map((row) => row.name);
+    expect(endpointColumns).toContain('name');
 
     const project = db.prepare("SELECT org_id FROM projects WHERE id = 'legacy-proj'").get() as { org_id: string | null };
     expect(project.org_id).toBeNull();

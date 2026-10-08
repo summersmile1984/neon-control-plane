@@ -4071,23 +4071,12 @@
             },
             "delete": {
                 "summary": "Delete branch",
-                "description": "Deletes the specified branch from a project and places all compute endpoints into an idle state, breaking existing client connections.\n\nThe deletion completes after all operations finish.\nYou cannot delete a project's root or default branch, or a branch that has a child branch.\nA project must have at least one branch.\n\nBy default, deleted branches can be recovered within a 7-day grace period.\nUse the `hard_delete` parameter to permanently delete the branch immediately.\nFor related information, see [Manage branches](https://neon.com/docs/manage/branches/).\n",
+                "description": "Deletes the specified branch from a project and places all compute endpoints into an idle state, breaking existing client connections.\n\nThe deletion completes after all operations finish.\nYou cannot delete a project's root or default branch, or a branch that has a child branch.\nA project must have at least one branch.\n\nFor related information, see [Manage branches](https://neon.com/docs/manage/branches/).\n",
                 "tags": [
                     "Branch"
                 ],
                 "operationId": "deleteProjectBranch",
-                "parameters": [
-                    {
-                        "name": "hard_delete",
-                        "in": "query",
-                        "description": "If true, the branch is permanently deleted immediately without a recovery window.\nIf false (default), the branch can be recovered within 7 days via the recover endpoint.\n\nThis parameter is part of the Branch Recovery feature, which is in preview and not available to all users.\n",
-                        "required": false,
-                        "schema": {
-                            "type": "boolean",
-                            "default": false
-                        }
-                    }
-                ],
+                "parameters": [],
                 "responses": {
                     "200": {
                         "description": "Deleted the specified branch",
@@ -6521,7 +6510,7 @@
                     },
                     {
                         "name": "include_v1_metrics",
-                        "description": "The field is deprecated. Please use `metrics` instead.\nIf `metrics` is specified, this field is ignored.\nInclude metrics utilized in previous pricing models.\n- **data_storage_bytes_hour**: The sum of the maximum observed storage values for each hour,\n  which never decreases.\n",
+                        "description": "The field is deprecated and no longer has any effect: the only metric it used to add\n(`data_storage_bytes_hour`) is retired and always returns 0. Please use `metrics` instead.\nIf `metrics` is specified, this field is ignored.\n",
                         "in": "query",
                         "deprecated": true,
                         "schema": {
@@ -6530,7 +6519,7 @@
                     },
                     {
                         "name": "metrics",
-                        "description": "Specify a list of metrics to include in the response.\nIf omitted, active_time, compute_time, written_data, synthetic_storage_size are returned.\nPossible values:\n- `active_time_seconds`\n- `compute_time_seconds`\n- `written_data_bytes`\n- `synthetic_storage_size_bytes`\n- `data_storage_bytes_hour`\n- `logical_size_bytes`\n- `logical_size_bytes_hour`\n\nA list of metrics can be specified as an array of parameter values or as a comma-separated list in a single parameter value.\n- As an array of parameter values: `metrics=cpu_seconds&metrics=ram_bytes`\n- As a comma-separated list in a single parameter value: `metrics=cpu_seconds,ram_bytes`\n",
+                        "description": "Specify a list of metrics to include in the response.\nIf omitted, active_time, compute_time, written_data are returned.\nPossible values:\n- `active_time_seconds`\n- `compute_time_seconds`\n- `written_data_bytes`\n- `synthetic_storage_size_bytes` (deprecated: always returns 0; use the consumption history v2 endpoints instead)\n- `data_storage_bytes_hour` (deprecated: always returns 0; use the consumption history v2 endpoints instead)\n- `logical_size_bytes`\n- `logical_size_bytes_hour`\n\nA list of metrics can be specified as an array of parameter values or as a comma-separated list in a single parameter value.\n- As an array of parameter values: `metrics=cpu_seconds&metrics=ram_bytes`\n- As a comma-separated list in a single parameter value: `metrics=cpu_seconds,ram_bytes`\n",
                         "in": "query",
                         "schema": {
                             "$ref": "#/components/schemas/ConsumptionHistoryQueryMetrics"
@@ -9865,6 +9854,196 @@
                 }
             }
         },
+        "/projects/{project_id}/branches/{branch_id}/triggers": {
+            "parameters": [
+                {
+                    "name": "project_id",
+                    "in": "path",
+                    "description": "The Neon project ID",
+                    "required": true,
+                    "schema": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9-]{1,60}$"
+                    }
+                },
+                {
+                    "name": "branch_id",
+                    "in": "path",
+                    "description": "The Neon branch ID",
+                    "required": true,
+                    "schema": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9-]{1,60}$"
+                    }
+                }
+            ],
+            "get": {
+                "summary": "List triggers on the branch",
+                "description": "Lists the complete project-bounded set of triggers visible on the branch,\nordered by `trigger_id`. An inherited trigger keeps its project-wide ID\nand configuration, and is disabled on the child until explicitly enabled\nthere.\n\nThe supported trigger types are `schedule` and\n`storage_object_created`. A storage-object-created trigger watches one\nexact bucket and fires only after an object upload succeeds.\n\n**Note**: This endpoint is currently in Beta.\n",
+                "tags": [
+                    "Functions"
+                ],
+                "x-stability-level": "beta",
+                "operationId": "listProjectBranchTriggers",
+                "responses": {
+                    "200": {
+                        "description": "The branch-effective trigger list",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TriggersListResponse"
+                                }
+                            }
+                        }
+                    },
+                    "default": {
+                        "$ref": "#/components/responses/GeneralError"
+                    }
+                }
+            },
+            "post": {
+                "summary": "Create a trigger",
+                "description": "Creates a trigger for a Function visible on the branch. The required\n`type` discriminator selects the trigger-specific configuration. The\nsupported types are `schedule` and `storage_object_created`. A schedule\ntrigger uses a numeric five-field cron expression interpreted in UTC. A\nstorage-object-created trigger fires only after a successful upload to\none exact bucket and may narrow matches to an object-key prefix.\n\nThe name must be unique among triggers visible on the branch, including\ninherited triggers.\n\n**Note**: This endpoint is currently in Beta.\n",
+                "tags": [
+                    "Functions"
+                ],
+                "x-stability-level": "beta",
+                "operationId": "createProjectBranchTrigger",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/TriggerCreateRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Trigger created",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TriggerResponse"
+                                }
+                            }
+                        }
+                    },
+                    "default": {
+                        "$ref": "#/components/responses/GeneralError"
+                    }
+                }
+            }
+        },
+        "/projects/{project_id}/branches/{branch_id}/triggers/{trigger_id}": {
+            "parameters": [
+                {
+                    "name": "project_id",
+                    "in": "path",
+                    "description": "The Neon project ID",
+                    "required": true,
+                    "schema": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9-]{1,60}$"
+                    }
+                },
+                {
+                    "name": "branch_id",
+                    "in": "path",
+                    "description": "The Neon branch ID",
+                    "required": true,
+                    "schema": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9-]{1,60}$"
+                    }
+                },
+                {
+                    "name": "trigger_id",
+                    "in": "path",
+                    "description": "The opaque, project-wide trigger ID",
+                    "required": true,
+                    "schema": {
+                        "$ref": "#/components/schemas/TriggerID"
+                    }
+                }
+            ],
+            "get": {
+                "summary": "Get a trigger",
+                "description": "Returns the trigger visible on the branch. The supported trigger types\nare `schedule` and `storage_object_created`.\n\n**Note**: This endpoint is currently in Beta.\n",
+                "tags": [
+                    "Functions"
+                ],
+                "x-stability-level": "beta",
+                "operationId": "getProjectBranchTrigger",
+                "responses": {
+                    "200": {
+                        "description": "The trigger",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TriggerResponse"
+                                }
+                            }
+                        }
+                    },
+                    "default": {
+                        "$ref": "#/components/responses/GeneralError"
+                    }
+                }
+            },
+            "patch": {
+                "summary": "Update a trigger",
+                "description": "Applies a partial update. The required `type` discriminator must identify\nthe existing trigger kind. The supported types are `schedule` and\n`storage_object_created`. Editing an inherited trigger creates a\nchild-local shadow with the same `trigger_id`; it remains disabled unless\nthis request explicitly enables it. For a schedule trigger, updating the\nschedule or enabled state increments `version` and recomputes\n`next_run_at`.\n\nDisabling stops future scheduling but does not cancel occurrences already\ncommitted for delivery. For `storage_object_created`, the configuration\nselects one exact bucket. An omitted object-key prefix matches every key\nin that bucket; a present prefix is matched byte-for-byte and\ncase-sensitively against the full key, without path normalization or a\npath-segment boundary.\n\n**Note**: This endpoint is currently in Beta.\n",
+                "tags": [
+                    "Functions"
+                ],
+                "x-stability-level": "beta",
+                "operationId": "updateProjectBranchTrigger",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/TriggerUpdateRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "The updated trigger",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TriggerResponse"
+                                }
+                            }
+                        }
+                    },
+                    "default": {
+                        "$ref": "#/components/responses/GeneralError"
+                    }
+                }
+            },
+            "delete": {
+                "summary": "Delete a trigger",
+                "description": "Deletes a branch-local trigger or writes a branch-local tombstone for an\ninherited trigger so it does not reappear. Deletion stops future\nscheduling or storage-event matching but does not cancel invocations\nalready committed for delivery. The supported trigger types are\n`schedule` and `storage_object_created`.\n\n**Note**: This endpoint is currently in Beta.\n",
+                "tags": [
+                    "Functions"
+                ],
+                "x-stability-level": "beta",
+                "operationId": "deleteProjectBranchTrigger",
+                "responses": {
+                    "204": {
+                        "description": "Trigger deleted"
+                    },
+                    "default": {
+                        "$ref": "#/components/responses/GeneralError"
+                    }
+                }
+            }
+        },
         "/projects/{project_id}/branches/{branch_id}/custom-domains": {
             "parameters": [
                 {
@@ -10936,7 +11115,8 @@
                         "format": "date-time"
                     },
                     "synthetic_storage_size": {
-                        "description": "The current space occupied by the project in Postgres storage, in bytes. Synthetic Postgres storage size combines the logical data size and Write-Ahead Log (WAL) size for all branches in a project.\n",
+                        "description": "Deprecated: always returns 0. Use the consumption history v2 endpoints (`/consumption_history/v2/projects`, `/consumption_history/v2/branches`) instead.\nThe current space occupied by the project in Postgres storage, in bytes. Synthetic Postgres storage size combines the logical data size and Write-Ahead Log (WAL) size for all branches in a project.\n",
+                        "deprecated": true,
                         "type": "integer",
                         "format": "int64"
                     },
@@ -11042,7 +11222,8 @@
                 ],
                 "properties": {
                     "data_storage_bytes_hour": {
-                        "description": "Bytes-Hour. Project consumed that much Postgres storage hourly during the billing period. The value has some lag.\nThe value is reset at the beginning of each billing period.\n",
+                        "description": "Deprecated: always returns 0. Use the consumption history v2 endpoints (`/consumption_history/v2/projects`, `/consumption_history/v2/branches`) instead.\nBytes-Hour. Project consumed that much Postgres storage hourly during the billing period. The value has some lag.\nThe value is reset at the beginning of each billing period.\n",
+                        "deprecated": true,
                         "type": "integer",
                         "format": "int64",
                         "minimum": 0
@@ -11152,7 +11333,8 @@
                         "format": "date-time"
                     },
                     "synthetic_storage_size": {
-                        "description": "The current space occupied by the project in Postgres storage, in bytes. Synthetic Postgres storage size combines the logical data size and Write-Ahead Log (WAL) size for all branches in a project.\n",
+                        "description": "Deprecated: always returns 0. Use the consumption history v2 endpoints (`/consumption_history/v2/projects`, `/consumption_history/v2/branches`) instead.\nThe current space occupied by the project in Postgres storage, in bytes. Synthetic Postgres storage size combines the logical data size and Write-Ahead Log (WAL) size for all branches in a project.\n",
+                        "deprecated": true,
                         "type": "integer",
                         "format": "int64"
                     },
@@ -11918,7 +12100,8 @@
                             "active_time_seconds": 27853,
                             "compute_time_seconds": 18346,
                             "written_data_bytes": 1073741824,
-                            "synthetic_storage_size_bytes": 5368709120
+                            "synthetic_storage_size_bytes": 0,
+                            "data_storage_bytes_hour": 0
                         },
                         {
                             "timeframe_start": "2024-03-23T00:00:00Z",
@@ -11926,7 +12109,8 @@
                             "active_time_seconds": 17498,
                             "compute_time_seconds": 3378,
                             "written_data_bytes": 5741824,
-                            "synthetic_storage_size_bytes": 2370912
+                            "synthetic_storage_size_bytes": 0,
+                            "data_storage_bytes_hour": 0
                         }
                     ]
                 }
@@ -12022,12 +12206,14 @@
                         "format": "uint64"
                     },
                     "synthetic_storage_size_bytes": {
-                        "description": "Bytes. The space occupied in Postgres storage. Synthetic Postgres storage size combines the logical data size and Write-Ahead Log (WAL) size for all branches.\n",
+                        "description": "Deprecated: always returns 0. Use the consumption history v2 endpoints (`/consumption_history/v2/projects`, `/consumption_history/v2/branches`) instead.\nBytes. The space occupied in Postgres storage. Synthetic Postgres storage size combines the logical data size and Write-Ahead Log (WAL) size for all branches.\n",
+                        "deprecated": true,
                         "type": "integer",
                         "format": "uint64"
                     },
                     "data_storage_bytes_hour": {
-                        "description": "Bytes-Hour. The amount of Postgres storage consumed hourly.\n",
+                        "description": "Deprecated: always returns 0. Use the consumption history v2 endpoints (`/consumption_history/v2/projects`, `/consumption_history/v2/branches`) instead.\nBytes-Hour. The amount of Postgres storage consumed hourly.\n",
+                        "deprecated": true,
                         "type": "integer",
                         "format": "uint64"
                     },
@@ -12048,7 +12234,8 @@
                     "active_time_seconds",
                     "compute_time_seconds",
                     "written_data_bytes",
-                    "synthetic_storage_size_bytes"
+                    "synthetic_storage_size_bytes",
+                    "data_storage_bytes_hour"
                 ]
             },
             "ConsumptionHistoryPerTimeframeV2": {
@@ -13505,7 +13692,7 @@
                         "type": "boolean"
                     },
                     "authentication_method": {
-                        "description": "Authentication method configured for this role: `password`, `oauth`, or `no_login`.\n",
+                        "description": "Authentication method configured for this role: `password`, `oauth`, `oidc`, or `no_login`.\n",
                         "type": "string",
                         "example": "password"
                     },
@@ -17560,6 +17747,421 @@
                     }
                 }
             },
+            "TriggerID": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.\\-]{0,127}$",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "Opaque, server-minted project-wide trigger identifier."
+            },
+            "FunctionTriggerSchedule": {
+                "type": "object",
+                "description": "A numeric five-field cron schedule interpreted in UTC.",
+                "required": [
+                    "cron"
+                ],
+                "properties": {
+                    "cron": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024,
+                        "description": "Numeric five-field cron expression (minute through day-of-week), interpreted in UTC.",
+                        "example": "0 9 * * 1-5"
+                    }
+                },
+                "additionalProperties": false
+            },
+            "FunctionTriggerStorageObjectCreated": {
+                "type": "object",
+                "description": "Matches successful uploads to one exact bucket and, when configured, an\nobject-key prefix. The Function receives a JSON request body with\n`type` set to `storage_object_created` and a `data` object containing\nexactly `bucket_name` and `object_key`.\n",
+                "required": [
+                    "bucket_name"
+                ],
+                "properties": {
+                    "bucket_name": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 63,
+                        "description": "The exact object-storage bucket name to watch."
+                    },
+                    "prefix": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024,
+                        "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]+$",
+                        "description": "Optional object-key prefix of at most 1024 UTF-8 bytes. When omitted,\nevery key in the bucket matches. When present, the full object key\nmust start with these exact bytes; matching is case-sensitive and\ndoes not normalize paths or require a path-segment boundary.\nMatch-all responses omit this field rather than returning an empty\nstring.\n"
+                    }
+                },
+                "additionalProperties": false
+            },
+            "TriggerCreateRequest": {
+                "type": "object",
+                "description": "Trigger creation payload discriminated by `type`. The supported trigger\ntypes are `schedule` and `storage_object_created`.\n",
+                "discriminator": {
+                    "propertyName": "type",
+                    "mapping": {
+                        "schedule": "#/components/schemas/ScheduleTriggerCreateRequest",
+                        "storage_object_created": "#/components/schemas/StorageObjectCreatedTriggerCreateRequest"
+                    }
+                },
+                "oneOf": [
+                    {
+                        "$ref": "#/components/schemas/ScheduleTriggerCreateRequest"
+                    },
+                    {
+                        "$ref": "#/components/schemas/StorageObjectCreatedTriggerCreateRequest"
+                    }
+                ]
+            },
+            "ScheduleTriggerCreateRequest": {
+                "type": "object",
+                "required": [
+                    "type",
+                    "function_slug",
+                    "name",
+                    "schedule"
+                ],
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "schedule"
+                        ],
+                        "description": "Trigger type discriminator."
+                    },
+                    "function_slug": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9]{1,20}$",
+                        "description": "The branch-local Function slug to invoke."
+                    },
+                    "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "description": "Human-readable name, unique among triggers visible on the branch."
+                    },
+                    "function_path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2048,
+                        "default": "/",
+                        "description": "Path passed to the target Function. Defaults to `/`."
+                    },
+                    "schedule": {
+                        "$ref": "#/components/schemas/FunctionTriggerSchedule"
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "Whether future occurrences should be scheduled."
+                    }
+                },
+                "additionalProperties": false
+            },
+            "StorageObjectCreatedTriggerCreateRequest": {
+                "type": "object",
+                "required": [
+                    "type",
+                    "function_slug",
+                    "name",
+                    "storage_object_created"
+                ],
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "storage_object_created"
+                        ],
+                        "description": "Trigger type discriminator."
+                    },
+                    "function_slug": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9]{1,20}$",
+                        "description": "The branch-local Function slug to invoke."
+                    },
+                    "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "description": "Human-readable name, unique among triggers visible on the branch."
+                    },
+                    "function_path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2048,
+                        "default": "/",
+                        "description": "Path passed to the target Function. Defaults to `/`."
+                    },
+                    "storage_object_created": {
+                        "$ref": "#/components/schemas/FunctionTriggerStorageObjectCreated"
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "Whether successful matching uploads should invoke the Function."
+                    }
+                },
+                "additionalProperties": false
+            },
+            "TriggerUpdateRequest": {
+                "type": "object",
+                "description": "Partial trigger update discriminated by `type`. The supported trigger\ntypes are `schedule` and `storage_object_created`.\n",
+                "discriminator": {
+                    "propertyName": "type",
+                    "mapping": {
+                        "schedule": "#/components/schemas/ScheduleTriggerUpdateRequest",
+                        "storage_object_created": "#/components/schemas/StorageObjectCreatedTriggerUpdateRequest"
+                    }
+                },
+                "oneOf": [
+                    {
+                        "$ref": "#/components/schemas/ScheduleTriggerUpdateRequest"
+                    },
+                    {
+                        "$ref": "#/components/schemas/StorageObjectCreatedTriggerUpdateRequest"
+                    }
+                ]
+            },
+            "ScheduleTriggerUpdateRequest": {
+                "type": "object",
+                "required": [
+                    "type"
+                ],
+                "minProperties": 2,
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "schedule"
+                        ],
+                        "description": "Trigger type discriminator; it does not change the trigger type."
+                    },
+                    "function_slug": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9]{1,20}$",
+                        "description": "Replacement branch-local Function slug."
+                    },
+                    "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                    },
+                    "function_path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2048
+                    },
+                    "schedule": {
+                        "$ref": "#/components/schemas/FunctionTriggerSchedule"
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "True enables and false disables future scheduling."
+                    }
+                },
+                "additionalProperties": false
+            },
+            "StorageObjectCreatedTriggerUpdateRequest": {
+                "type": "object",
+                "required": [
+                    "type"
+                ],
+                "minProperties": 2,
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "storage_object_created"
+                        ],
+                        "description": "Trigger type discriminator; it does not change the trigger type."
+                    },
+                    "function_slug": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9]{1,20}$",
+                        "description": "Replacement branch-local Function slug."
+                    },
+                    "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                    },
+                    "function_path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2048
+                    },
+                    "storage_object_created": {
+                        "$ref": "#/components/schemas/FunctionTriggerStorageObjectCreated"
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "True enables and false disables future matching uploads."
+                    }
+                },
+                "additionalProperties": false
+            },
+            "Trigger": {
+                "type": "object",
+                "description": "A branch-effective trigger discriminated by `type`. The supported trigger\ntypes are `schedule` and `storage_object_created`.\n",
+                "discriminator": {
+                    "propertyName": "type",
+                    "mapping": {
+                        "schedule": "#/components/schemas/ScheduleTrigger",
+                        "storage_object_created": "#/components/schemas/StorageObjectCreatedTrigger"
+                    }
+                },
+                "oneOf": [
+                    {
+                        "$ref": "#/components/schemas/ScheduleTrigger"
+                    },
+                    {
+                        "$ref": "#/components/schemas/StorageObjectCreatedTrigger"
+                    }
+                ]
+            },
+            "ScheduleTrigger": {
+                "type": "object",
+                "description": "A branch-effective schedule trigger for a Function.",
+                "required": [
+                    "type",
+                    "trigger_id",
+                    "function_slug",
+                    "name",
+                    "function_path",
+                    "schedule",
+                    "enabled",
+                    "version",
+                    "next_run_at",
+                    "inherited"
+                ],
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "schedule"
+                        ],
+                        "description": "Trigger type discriminator."
+                    },
+                    "trigger_id": {
+                        "$ref": "#/components/schemas/TriggerID"
+                    },
+                    "function_slug": {
+                        "type": "string",
+                        "description": "The branch-local Function slug resolved when an occurrence is consumed."
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Human-readable trigger name."
+                    },
+                    "function_path": {
+                        "type": "string",
+                        "description": "Path passed to the target Function."
+                    },
+                    "schedule": {
+                        "$ref": "#/components/schemas/FunctionTriggerSchedule"
+                    },
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "version": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 1,
+                        "description": "Monotonic configuration version."
+                    },
+                    "next_run_at": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Next scheduled occurrence as an RFC 3339 UTC timestamp, or null\nwhile disabled or inherited and not explicitly enabled on this branch.\n"
+                    },
+                    "inherited": {
+                        "type": "boolean",
+                        "description": "True when the effective configuration was authored on an ancestor branch."
+                    }
+                },
+                "additionalProperties": false
+            },
+            "StorageObjectCreatedTrigger": {
+                "type": "object",
+                "description": "A branch-effective trigger that invokes a Function after a successful\nupload matching its exact bucket and optional object-key prefix.\n",
+                "required": [
+                    "type",
+                    "trigger_id",
+                    "function_slug",
+                    "name",
+                    "function_path",
+                    "storage_object_created",
+                    "enabled",
+                    "version",
+                    "inherited"
+                ],
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "storage_object_created"
+                        ],
+                        "description": "Trigger type discriminator."
+                    },
+                    "trigger_id": {
+                        "$ref": "#/components/schemas/TriggerID"
+                    },
+                    "function_slug": {
+                        "type": "string",
+                        "description": "The branch-local Function slug resolved when an invocation is consumed."
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Human-readable trigger name."
+                    },
+                    "function_path": {
+                        "type": "string",
+                        "description": "Path passed to the target Function."
+                    },
+                    "storage_object_created": {
+                        "$ref": "#/components/schemas/FunctionTriggerStorageObjectCreated"
+                    },
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "version": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 1,
+                        "description": "Monotonic configuration version."
+                    },
+                    "inherited": {
+                        "type": "boolean",
+                        "description": "True when the effective configuration was authored on an ancestor branch."
+                    }
+                },
+                "additionalProperties": false
+            },
+            "TriggerResponse": {
+                "type": "object",
+                "required": [
+                    "trigger"
+                ],
+                "properties": {
+                    "trigger": {
+                        "$ref": "#/components/schemas/Trigger"
+                    }
+                }
+            },
+            "TriggersListResponse": {
+                "type": "object",
+                "required": [
+                    "triggers"
+                ],
+                "properties": {
+                    "triggers": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/Trigger"
+                        }
+                    }
+                }
+            },
             "CustomDomain": {
                 "type": "object",
                 "required": [
@@ -17678,7 +18280,7 @@
                     "zip": {
                         "type": "string",
                         "format": "binary",
-                        "description": "Optional ZIP archive of the function source code. Omit to reuse the\nlatest version's bundle (a config-only change). Required for the\nfirst deployment of a function.\n"
+                        "description": "Optional ZIP archive of the function source code. Omit to reuse the\nlatest version's bundle (a config-only change). Required for the\nfirst deployment of a function.\n\nPlace `index.mjs` or `index.js` at the archive root, without a\ncontaining directory. If both exist, `index.mjs` is loaded. Export a\nrequest handler function or an object with a `fetch` method. Use\n`export default` for ESM or `module.exports` for CommonJS; prefer\n`index.mjs` for ESM.\n\nUpload JavaScript ready to run on Node.js 24. Compile TypeScript\nbefore uploading. Bundle dependencies into the entry module, or\ninclude the required modules and assets in the archive with their\nrelative paths preserved (including `node_modules` for external\npackages). Node.js built-in modules do not need to be bundled.\nThe API does not transpile, bundle, or install dependencies.\nThe ZIP is limited to 32 MiB compressed and 128 MiB extracted, with\nat most 32,768 entries and 64 MiB per file. Bundle large dependency\ntrees to keep the archive small. ZIPs larger than 32 MiB are rejected\nwith HTTP 413 before creating a deployment. The extracted-size,\nentry-count, and per-file limits are enforced during the asynchronous\nbuild; an accepted upload that exceeds them fails the build.\n\nFor example, a self-contained ESM bundle needs only `index.mjs`\nat the ZIP root. The Neon CLI bundles source into this layout by\ndefault; `neon function deploy --no-bundle` packages a prebuilt\ndirectory or an entry file named `index.mjs` or `index.js`.\n"
                     },
                     "runtime": {
                         "type": "string",

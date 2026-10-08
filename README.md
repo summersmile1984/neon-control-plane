@@ -200,7 +200,7 @@ token 前缀默认 `napi_`（`CP_KEY_PREFIX` 可改），只在**创建时回显
 
 ## 已实现的 API
 
-`spec/SUBSET.md` 列出 **30 条**路径（官方 120 条的子集），全部可用：
+`spec/SUBSET.md` 列出 **30 条**路径（官方 122 条的子集），全部可用：
 
 **资源面**
 
@@ -473,7 +473,7 @@ docs/design/ docs/notes/   设计文档与真机实测笔记
 | [M0 pageserver 实测](docs/notes/M0-pageserver-findings.md) | 真机事实（重复建 timeline 幂等、删除异步等） |
 | [M0 compute 实测](docs/notes/M0-compute-findings.md) | compute API 的 JWT 合同、spec 写法、删角色必须 delta |
 
-`spec/neon-api-v2.json` 是官方 OpenAPI 原样 vendored（`https://neon.com/api_spec/release/v2.json`），**禁止手改**：它是唯一的对外合同来源。
+`spec/neon-api-v2.json` 是官方 OpenAPI 原样 vendored（`https://neon.com/api_spec/release/v2.json`，2026-10-08 同步，122 条路径），**禁止手改**：它是唯一的对外合同来源。刷新后先跑 `pnpm spec:facts`，再看 `pnpm verify` 是否仍全绿。
 
 ## 常见问题与排错
 
@@ -485,6 +485,7 @@ docs/design/ docs/notes/   设计文档与真机实测笔记
 - **`/console/state` 返回 401**：页面是公开外壳，数据要登录或粘贴 key。
 - **容器里的客户端连 proxy**：用 `host.docker.internal` + `options=endpoint%3D<id>` 回退寻址（见上）。
 - **状态漂移**：console 标红表示 SQLite 里 endpoint 是 `active` 但容器没了（多半被手工 `docker rm` 或 start 半路失败）。
+- **`host port NNNNN is published by container …`**：`start_compute` 不会去抢已被别的容器发布的端口（另一个控制面实例、或上次遗留的 compute）。Docker 会静默丢弃冲突的端口映射，于是 `await_ready` 一直在轮询别人的 compute 并收到 401。`docker rm -f` 掉报错里点名的容器，或改 `CP_PORT_RANGE`，操作重试就会自己恢复。
 
 ## 安全注意事项
 

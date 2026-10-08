@@ -45,6 +45,12 @@ export interface DockerClient {
   removeContainer(idOrName: string, force?: boolean): Promise<void>;
   inspect(idOrName: string): Promise<ContainerInfo | undefined>;
   listByLabel(label: string, value?: string): Promise<ContainerInfo[]>;
+  /**
+   * Every host port currently published by a container on this Docker host, mapped to the container
+   * name. A published port is the compute's identity from the reconciler's point of view, so the
+   * allocator has to know what else is holding ports before it binds one.
+   */
+  publishedPorts(): Promise<Map<number, string>>;
   logs(idOrName: string, tail?: number): Promise<string>;
 }
 
@@ -159,6 +165,19 @@ export function createDockerClient(options: DockerClientOptions): DockerClient {
       const filter = encodeURIComponent(JSON.stringify({ label: [value === undefined ? label : `${label}=${value}`] }));
       const { body } = await call<Array<Parameters<typeof toInfo>[0]>>('GET', `/containers/json?all=true&filters=${filter}`);
       return body.map(toInfo);
+    },
+
+    async publishedPorts() {
+      type Listed = { Names?: string[]; Ports?: Array<{ PublicPort?: number }> };
+      const { body } = await call<Listed[]>('GET', '/containers/json?all=true');
+      const ports = new Map<number, string>();
+      for (const container of body) {
+        const name = (container.Names?.[0] ?? '').replace(/^\//, '');
+        for (const port of container.Ports ?? []) {
+          if (typeof port.PublicPort === 'number') ports.set(port.PublicPort, name);
+        }
+      }
+      return ports;
     },
 
     async logs(idOrName, tail = 50) {

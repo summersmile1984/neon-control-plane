@@ -58,7 +58,7 @@ export interface EndpointRepo {
   listByBranch(branchId: string): EndpointRow[];
   listActive(): EndpointRow[];
   readWriteFor(branchId: string): EndpointRow | undefined;
-  update(id: string, patch: Partial<Pick<EndpointRow, 'suspend_timeout_seconds' | 'autoscaling_min_cu' | 'autoscaling_max_cu' | 'settings_json' | 'disabled' | 'branch_id' | 'container_id' | 'host'>>): EndpointRow | undefined;
+  update(id: string, patch: Partial<Pick<EndpointRow, 'name' | 'suspend_timeout_seconds' | 'autoscaling_min_cu' | 'autoscaling_max_cu' | 'settings_json' | 'disabled' | 'branch_id' | 'container_id' | 'host'>>): EndpointRow | undefined;
   setState(id: string, state: EndpointState, pending?: EndpointState | null): EndpointRow | undefined;
   touchActivity(id: string): void;
   usedPorts(): number[];
@@ -229,12 +229,12 @@ export function createRepositories(db: Db): Repositories {
     insert(row) {
       const ts = now();
       db.prepare(
-        `INSERT INTO endpoints (id, project_id, branch_id, type, current_state, pending_state, host, container_id,
+        `INSERT INTO endpoints (id, project_id, branch_id, name, type, current_state, pending_state, host, container_id,
            pg_port, http_port, suspend_timeout_seconds, autoscaling_min_cu, autoscaling_max_cu, settings_json,
            disabled, created_at, updated_at)
-         VALUES (?,?,?,?,?,NULL,?,NULL,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,NULL,?,NULL,?,?,?,?,?,?,?,?,?)`,
       ).run(
-        row.id, row.project_id, row.branch_id, row.type, row.current_state, row.host,
+        row.id, row.project_id, row.branch_id, row.name, row.type, row.current_state, row.host,
         row.pg_port, row.http_port, row.suspend_timeout_seconds, row.autoscaling_min_cu, row.autoscaling_max_cu,
         row.settings_json, row.disabled, ts, ts,
       );

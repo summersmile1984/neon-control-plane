@@ -7,7 +7,7 @@ import { endpointView } from '../../domain/views.ts';
 import type { EndpointType } from '../../store/rows.ts';
 import {
   checkRequest, findBranch, findEndpoint, findProject, jsonBody, operationsView,
-  optionalBoolean, optionalInteger, requiredString, section,
+  optionalBoolean, optionalInteger, optionalString, requiredString, section,
 } from './helpers.ts';
 
 /** Compute endpoints and their lifecycle (002 §4.1, §5.4). */
@@ -34,6 +34,7 @@ export function registerEndpointRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
     const created = service.createEndpoint(
       project.id, branch.id, type as EndpointType,
       optionalInteger(endpoint, 'suspend_timeout_seconds'),
+      optionalString(endpoint, 'name'),
     );
     return respond(c, 'EndpointOperations', {
       endpoint: endpointView(created.endpoint, context),
@@ -54,6 +55,7 @@ export function registerEndpointRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
     checkRequest('EndpointUpdateRequest', body);
     const patch = section(body, 'endpoint');
     const updated = repos.endpoints.update(endpoint.id, {
+      ...(optionalString(patch, 'name') === undefined ? {} : { name: optionalString(patch, 'name')! }),
       ...(optionalInteger(patch, 'suspend_timeout_seconds') === undefined ? {} : { suspend_timeout_seconds: optionalInteger(patch, 'suspend_timeout_seconds')! }),
       ...(optionalBoolean(patch, 'disabled') === undefined ? {} : { disabled: optionalBoolean(patch, 'disabled')! ? 1 : 0 }),
       ...(patch.settings ? { settings_json: JSON.stringify(section(patch, 'settings')) } : {}),

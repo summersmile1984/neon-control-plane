@@ -363,6 +363,28 @@ describe('endpoints', () => {
     expect((await app.request(`/api/v2/projects/${projectId}/endpoints/${endpointId}`)).status).toBe(404);
   });
 
+  it('keeps the endpoint name the client sets, on create and on update', async () => {
+    const created = await createProject();
+    const projectId = (created.project as Record<string, unknown>).id as string;
+    const branchId = (created.branch as Record<string, unknown>).id as string;
+
+    const posted = await json(await app.request(`/api/v2/projects/${projectId}/endpoints`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint: { branch_id: branchId, type: 'read_only', name: 'analytics' } }),
+    }));
+    const endpointId = (posted.endpoint as Record<string, unknown>).id as string;
+    expect((posted.endpoint as Record<string, unknown>).name).toBe('analytics');
+
+    const patched = await json(await app.request(`/api/v2/projects/${projectId}/endpoints/${endpointId}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint: { name: 'analytics-v2' } }),
+    }));
+    expect((patched.endpoint as Record<string, unknown>).name).toBe('analytics-v2');
+
+    const fetched = await json(await app.request(`/api/v2/projects/${projectId}/endpoints/${endpointId}`));
+    expect((fetched.endpoint as Record<string, unknown>).name).toBe('analytics-v2');
+  });
+
   it('allows only one read_write endpoint per branch', async () => {
     const created = await createProject();
     const projectId = (created.project as Record<string, unknown>).id as string;

@@ -96,6 +96,7 @@ export function endpointView(row: EndpointRow, context: ViewContext): Record<str
     id: row.id,
     project_id: row.project_id,
     branch_id: row.branch_id,
+    ...(row.name ? { name: row.name } : {}),
     host: row.host,
     proxy_host: context.zone,
     region_id: 'local',

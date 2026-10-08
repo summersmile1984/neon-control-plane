@@ -118,7 +118,7 @@ describe('branches', () => {
 
 describe('endpoints', () => {
   const makeEndpoint = (type: 'read_write' | 'read_only') => repos.endpoints.insert({
-    id: generateEndpointId(), project_id: projectId, branch_id: branchId, type, current_state: 'init',
+    id: generateEndpointId(), project_id: projectId, branch_id: branchId, name: null, type, current_state: 'init',
     host: '127.0.0.1', pg_port: 55501 + (type === 'read_only' ? 1 : 0), http_port: 55601,
     suspend_timeout_seconds: 300, autoscaling_min_cu: 0.25, autoscaling_max_cu: 0.25, settings_json: '{}', disabled: 0,
   });
