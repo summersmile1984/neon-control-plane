@@ -54,6 +54,13 @@ function expectValid(schemaName: string, body: unknown): void {
 }
 
 describe('views satisfy the official schemas', () => {
+  it('returns actual project ownership and reconciliation markers without substituting the configured default organization', () => {
+    const annotation = { siteops_workspace_id: 'ws_actual', siteops_logical_resource_id: 'ws_actual' };
+    const row = { ...projectRow, org_id: 'org-other', annotation_json: JSON.stringify(annotation) };
+    const view = projectView(row, context);
+    expect(view).toMatchObject({ org_id: 'org-other', owner_id: 'org-other', default_branch_id: row.default_branch_id, annotation_value: annotation });
+    expectValid('Project', view); expectValid('ProjectListItem', projectListItemView(row, context));
+  });
   it('Project', () => expectValid('Project', projectView(projectRow, context)));
   it('ProjectListItem', () => expectValid('ProjectListItem', projectListItemView(projectRow, context)));
   it('Branch', () => expectValid('Branch', branchView(branchRow, context)));

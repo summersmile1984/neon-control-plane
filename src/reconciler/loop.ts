@@ -1,4 +1,4 @@
-import { stepsFor } from './actions.ts';
+import { LABEL_ENDPOINT, LABEL_INSTANCE, stepsFor } from './actions.ts';
 import type { ReconcilerDeps, StepContext } from './types.ts';
 
 /**
@@ -37,7 +37,7 @@ export interface Reconciler {
   stop(): void;
   /** Suspends endpoints idle for longer than their `suspend_timeout_seconds` (T-303). */
   sweepIdleEndpoints(): number;
-  /** Removes compute containers that no longer have a live endpoint row (T-902). */
+  /** Removes only explicitly owned orphans; missing ownership configuration disables cleanup. */
   reclaimOrphans(): Promise<number>;
 }
 
@@ -146,11 +146,13 @@ export function createReconciler(deps: ReconcilerDeps): Reconciler {
     },
 
     async reclaimOrphans() {
-      const containers = await deps.docker.listByLabel('neon-cp.endpoint_id');
+      const instanceId = deps.config.instanceId;
+      if (!instanceId) return 0;
+      const containers = await deps.docker.listByLabel(LABEL_INSTANCE, instanceId);
       let removed = 0;
       for (const container of containers) {
-        const endpointId = container.labels['neon-cp.endpoint_id'];
-        if (endpointId && deps.repos.endpoints.get(endpointId)) continue;
+        const endpointId = container.labels[LABEL_ENDPOINT];
+        if (container.labels[LABEL_INSTANCE] !== instanceId || !endpointId || deps.repos.endpoints.get(endpointId)) continue;
         await deps.docker.removeContainer(container.id, true);
         deps.logger.warn('removed orphan compute container', { container: container.name });
         removed += 1;

@@ -59,8 +59,9 @@ export function optionalInteger(source: Record<string, unknown>, key: string): n
   return value;
 }
 
-/** Postgres identifier grammar the API accepts for role and database names. */
-const PG_IDENT = /^[A-Za-z_][A-Za-z0-9_$]{0,62}$/;
+/** Bounded ASCII identifiers, passed as names in compute_ctl specs (not interpolated SQL).
+ * Neon/SiteOps names include dots and hyphens and are quoted by compute_ctl. */
+const PG_IDENT = /^[A-Za-z0-9_][A-Za-z0-9_$.-]{0,62}$/;
 
 export function pgIdentifier(value: string, field: string): string {
   if (!PG_IDENT.test(value)) throw errors.badRequest(`${field} must be a Postgres identifier`);

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -12,7 +13,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
  *   provider-neon  ->  https://neon-api.siteops.localhost:8443  ->  Caddy  ->  control plane :8080
  *
  * Preconditions (skipped, not failed, when missing):
- *   - the sibling checkout ../siteops-platform
+ *   - a SiteOps checkout; defaults to a `site-growth/siteops-platform` directory next to this
+ *     repository, override with SITEOPS_PLATFORM_DIR when it lives elsewhere
  *   - `pnpm compose:up` and `pnpm dev` in this repo, with CP_ROUTE_MODE=proxy
  *   - SiteOps Caddy running with the `neon-api.siteops.localhost` block (T-202)
  *
@@ -20,7 +22,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
  * mapped value, never on the HTTP status.
  */
 
-const SITEOPS_CLIENT = fileURLToPath(new URL('../../../siteops-platform/packages/provider-neon/src/index.ts', import.meta.url));
+const SITEOPS_PLATFORM_DIR =
+  process.env.SITEOPS_PLATFORM_DIR ?? fileURLToPath(new URL('../../../site-growth/siteops-platform', import.meta.url));
+const SITEOPS_CLIENT = join(SITEOPS_PLATFORM_DIR, 'packages/provider-neon/src/index.ts');
 const BASE_URL = process.env.CP_PUBLIC_BASE_URL ?? 'https://neon-api.siteops.localhost:8443/api/v2';
 const CONNECTION_ZONE = process.env.CP_ZONE ?? 'db.siteops.localhost';
 const API_KEY = process.env.CP_API_KEY ?? '';

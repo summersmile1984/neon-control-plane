@@ -14,6 +14,7 @@ import { type ActionDefinition, type OperationStep, type StepContext, step } fro
 const COMPUTE_HTTP_PORT = 3080;
 export const LABEL_ENDPOINT = 'neon-cp.endpoint_id';
 export const LABEL_PROJECT = 'neon-cp.project_id';
+export const LABEL_INSTANCE = 'neon-cp.instance_id';
 
 function requireProject(context: StepContext, projectId: string): ProjectRow {
   const project = context.repos.projects.get(projectId);
@@ -94,7 +95,10 @@ const startCompute: OperationStep[] = [
         [`${COMPUTE_PG_PORT}/tcp`]: endpoint.pg_port,
         [`${COMPUTE_HTTP_PORT}/tcp`]: endpoint.http_port,
       },
-      labels: { [LABEL_ENDPOINT]: endpoint.id, [LABEL_PROJECT]: endpoint.project_id },
+      labels: {
+        [LABEL_ENDPOINT]: endpoint.id, [LABEL_PROJECT]: endpoint.project_id,
+        ...(context.config.instanceId ? { [LABEL_INSTANCE]: context.config.instanceId } : {}),
+      },
     });
     context.repos.endpoints.update(endpoint.id, { container_id: created.id });
   }),

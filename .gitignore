@@ -13,3 +13,7 @@ infra/compose/pageserver_config/pageserver.pid
 infra/compose/pageserver_config/tenants/
 infra/compose/certs/
 infra/compose/.env
+
+# pageserver 的运行时删除清单（本地数据面状态，含 tenant/timeline 键与序列号）。
+# 与 pageserver.pid / tenants/ 同类：属于本机运行态，不进版本库。
+infra/compose/pageserver_config/deletion/

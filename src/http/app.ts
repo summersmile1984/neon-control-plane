@@ -19,6 +19,7 @@ import { cplaneErrorBody, isCplanePath, registerCplaneRoutes } from './routes/cp
 import { registerConsoleRoutes } from './routes/console.ts';
 import type { DockerClient } from '../adapters/docker.ts';
 import type { PageserverClient } from '../adapters/pageserver.ts';
+import type { ComputeClient } from '../adapters/compute.ts';
 import type { AppEnv } from './env.ts';
 
 export type { AppEnv };
@@ -29,6 +30,8 @@ export interface AppDeps {
   readonly config: Config;
   readonly logger: Logger;
   readonly reconciler?: Reconciler;
+  /** Authenticated catalog reads let the proxy authenticate SQL-created, least-privilege roles. */
+  readonly compute?: Pick<ComputeClient, 'dbsAndRoles'>;
   /** Read-only, and only for the console's stack snapshot; the API itself never touches these. */
   readonly docker?: DockerClient;
   readonly pageserver?: PageserverClient;

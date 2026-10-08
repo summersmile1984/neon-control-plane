@@ -4,6 +4,8 @@
 
 > **非 Neon 官方项目。** Neon 源码为 Apache-2.0，"Neon" 是其商标。本项目只用于本地开发环境，不面向生产自托管。
 
+本目录属于 [Site Growth 单仓](../README.md)，不是独立 Git 克隆；以下 `pnpm` 和 Compose 命令均从 `neon-control-plane/` 执行，保留本目录独立锁文件。不要复制旧仓 `.git` 或把 `compose:down` 当作安全停机命令。
+
 ---
 
 ## 目录
@@ -31,7 +33,7 @@
 
 ## 为什么存在
 
-Neon 云端控制面 `console.neon.tech/api/v2` **没有开源实现**（2026-09-07 核实：NeonD 只有 Web 面板、neon-operator 只有 Kubernetes CRD、Neon Local 需要云端 API key）。而 [SiteOps](https://github.com/summersmile1984/siteops-platform) 的 `provider-neon` / `neon-provider-service` 依赖这套 API 完成本地联调。
+Neon 云端控制面 `console.neon.tech/api/v2` **没有开源实现**（2026-09-07 核实：NeonD 只有 Web 面板、neon-operator 只有 Kubernetes CRD、Neon Local 需要云端 API key）。而 [SiteOps](https://github.com/summersmile1984/siteops-monorepo) 的 `provider-neon` / `neon-provider-service` 依赖这套 API 完成本地联调。
 
 于是本项目自建一个兼容 `api/v2` 的控制面，后端接 Neon 的开源数据面组件，让**未修改的 SiteOps 客户端**、`neonctl` 等消费者能在本地跑通整条链路。
 
@@ -130,6 +132,8 @@ cp infra/compose/.env.example infra/compose/.env
 pnpm compose:up     # pageserver + safekeeper + storage_broker + MinIO（约 1.9 GB 镜像）
 pnpm dev            # 控制面监听 :8080
 ```
+
+MinIO 的宿主机 API/控制台端口默认为 `19000`/`19001`，可在 `infra/compose/.env` 中通过 `NEON_MINIO_API_PORT`/`NEON_MINIO_CONSOLE_PORT` 覆盖；容器网络仍使用 `minio:9000`。因此可与 `siteops-platform` 本地栈的宿主机 `9000`/`9001` 并行运行。`compose:down` 会删除卷，不能用于无损停机或冒烟测试。
 
 首启会从 env 播种一个 owner、一个组织。设 `CP_BOOTSTRAP_API_KEY` 可以在启动时直接得到第一把 key：
 
@@ -239,6 +243,24 @@ token 前缀默认 `napi_`（`CP_KEY_PREFIX` 可改），只在**创建时回显
 postgresql://<role>:<pw>@host.docker.internal:5434/<db>?sslmode=no-verify&options=endpoint%3D<endpoint_id>
 ```
 
+## SiteOps workerd 的 SQL HTTP / WebSocket 入口
+
+proxy 的 `--http` 是监控/健康端口；SQL `/sql` 和 WebSocket `/v2` 由 `--wss` 提供。compose 已明确拆开：7001 发布 SQL HTTPS/WSS，7002 仅在容器内提供监控。不要把 7001 返回一个健康页当作 SQL 可用。
+
+生成独立的开发 CA 和服务证书（不会安装系统信任，也不会覆盖已有目录）：
+
+```sh
+node scripts/create-local-tls.mjs --output data/neon-tls --zone db.siteops.localhost
+```
+
+在 compose 环境中设置 `PROXY_CERT_DIR` 为该目录的绝对路径。proxy 读取 `wildcard.crt` / `wildcard.key`；Node/Miniflare 启动前将 `NODE_EXTRA_CA_CERTS` 指向 **ca.crt**。SiteOps T03 实测，自签名且 CA:FALSE 的叶证书虽然能在 Node 查询，但 workerd 请求失败；换成 CA 签发链后 HTTP/WSS 均通过。不要关闭 TLS 校验或将 leaf 当 CA 使用。证书有效期 30 天，更新时生成新目录并有序切换；不要把私钥提交到仓库。
+
+管理 API 创建的角色具有 Neon 管理权限；应用/站点角色须经 owner SQL 创建 `LOGIN NOINHERIT` 的受限角色。proxy 现在通过带签名的 compute_ctl `/dbs_and_roles` 读取实际 SCRAM verifier，因此支持这些 SQL 角色的连接及密码变更；不会将它们写回 managed roles/spec 并在重启时提升权限。私有 `/cplane/*` 必须配置 `CP_PROXY_TOKEN`，缺失配置直接拒绝。数据库的 NOLOGIN/权限约束仍由 Postgres 最终执行。
+
+不同管理实例必须使用不同的 `CP_INSTANCE_ID`、SQLite 路径、compute 目录和端口区间。启动回收只触及本实例标签下、当前账本不存在的 compute；未设置 instance id 时不执行孤儿回收。旧的无实例标签容器不会自动迁入或删除。更换 DB 文件时不能复用旧实例 ID，否则旧资源会被视为该实例的孤儿。
+
+可重复验证入口在相邻 SiteOps 平台仓库的 `pnpm preflight:local-neon`，包含管理 API 建临时项目、SQL 站点角色、实际 workerd HTTP/WSS 访问及项目删除读回；其报告不代表完整产品建站通过。
+
 ## 本地运维 console
 
 控制面起来后打开 <http://localhost:8080/console>（`/` 是同一个页面）。
@@ -264,6 +286,7 @@ postgresql://<role>:<pw>@host.docker.internal:5434/<db>?sslmode=no-verify&option
 |---|---|---|
 | `CP_PORT` | `8080` | 监听端口 |
 | `CP_DB_PATH` | `./data/cp.sqlite` | SQLite 路径 |
+| `CP_INSTANCE_ID` | 未设置 | compute 所有权标签；未设置不回收孤儿；与 SQLite 生命周期一致 |
 | `CP_MASTER_KEY` | —（必填） | 32 字节 base64；用于加密存库口令 |
 | `CP_VALIDATE_RESPONSES` | `1` | 响应过官方 OpenAPI schema 校验 |
 
@@ -321,6 +344,9 @@ postgresql://<role>:<pw>@host.docker.internal:5434/<db>?sslmode=no-verify&option
 | `PG_VERSION` | `17` | |
 | `CP_PROXY_TOKEN` | `local-proxy-token` | 与 `CP_PROXY_TOKEN` 一致 |
 | `CP_PORT` | `8080` | proxy 回连控制面的端口 |
+| `PROXY_PORT` / `PROXY_HTTP_PORT` | `5432` / `7001` | Postgres wire / SQL HTTPS 与 WSS |
+| `PROXY_CERT_DIR` | `./certs` | 服务证书目录；推荐绝对路径，使用 CA 签发的 wildcard.crt/key |
+| `NEON_MINIO_API_PORT` / `NEON_MINIO_CONSOLE_PORT` | `19000` / `19001` | 仅宿主机映射；容器内保留 9000 / 9001 |
 
 ## 测试
 

@@ -32,6 +32,8 @@ export interface IdentityConfig {
 
 /** Process configuration (002 §11). Fails fast: a bad value must not surface as a runtime 500. */
 export interface Config {
+  /** Explicit ownership namespace for startup orphan reclamation. Absent disables it. */
+  readonly instanceId?: string;
   readonly port: number;
   readonly dbPath: string;
   readonly masterKey: Buffer;
@@ -134,7 +136,12 @@ function loadIdentity(env: Env): IdentityConfig {
 }
 
 export function loadConfig(env: Env = process.env): Config {
+  const instanceId = env.CP_INSTANCE_ID?.trim();
+  if (instanceId && !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(instanceId)) {
+    throw new Error('CP_INSTANCE_ID must be a 1-64 character ownership identifier');
+  }
   return {
+    ...(instanceId ? { instanceId } : {}),
     port: integer(env, 'CP_PORT', 8080),
     dbPath: optional(env, 'CP_DB_PATH', './data/cp.sqlite'),
     masterKey: parseMasterKey(required(env, 'CP_MASTER_KEY')),

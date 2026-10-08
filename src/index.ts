@@ -67,7 +67,7 @@ export async function main(): Promise<void> {
   idleSweep.unref();
 
   // docker and pageserver are passed only so the console can report the stack's real state.
-  const app = createApp({ repos, service, config, logger, reconciler, docker, pageserver });
+  const app = createApp({ repos, service, config, logger, reconciler, compute, docker, pageserver });
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     logger.info('neon-control-plane listening', {
       port: info.port, route_mode: config.routeMode, zone: config.zone,

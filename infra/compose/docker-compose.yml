@@ -12,7 +12,7 @@ services:
   minio:
     restart: always
     image: quay.io/minio/minio:RELEASE.2022-10-20T00-55-09Z
-    ports: ["9000:9000", "9001:9001"]
+    ports: ["${NEON_MINIO_API_PORT:-19000}:9000", "${NEON_MINIO_CONSOLE_PORT:-19001}:9001"]
     environment:
       - MINIO_ROOT_USER=minio
       - MINIO_ROOT_PASSWORD=password
@@ -109,8 +109,10 @@ services:
     image: ${NEON_REPOSITORY:-docker.io/neondatabase}/neon:${NEON_TAG:-latest}
     # 5432 by default so the connection strings need no port, which is what the SiteOps client
     # requires. Set PROXY_PORT when a local PostgreSQL already owns 5432.
-    ports: ["${PROXY_PORT:-5432}:5432"]
-    volumes: [./certs:/certs:ro]
+    # 5432 = Postgres wire (TLS); --wss on 7001 serves SQL HTTPS/WebSocket.
+    # --http is metrics/health, not the SQL API; keep it on an unpublished port.
+    ports: ["${PROXY_PORT:-5432}:5432", "${PROXY_HTTP_PORT:-7001}:7001"]
+    volumes: ["${PROXY_CERT_DIR:-./certs}:/certs:ro"]
     environment:
       - NEON_PROXY_TO_CONTROLPLANE_TOKEN=${CP_PROXY_TOKEN:-local-proxy-token}
       - RUST_LOG=${PROXY_LOG:-info}
@@ -120,7 +122,8 @@ services:
     command:
       - proxy
       - --proxy=0.0.0.0:5432
-      - --http=0.0.0.0:7001
+      - --http=0.0.0.0:7002
+      - --wss=0.0.0.0:7001
       - --mgmt=0.0.0.0:7000
       - --auth-backend=control-plane
       # The control plane runs on the host. The proxy joins the method name onto this base with

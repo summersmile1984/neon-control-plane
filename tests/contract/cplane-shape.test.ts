@@ -2,7 +2,8 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { scramSha256 } from '../../src/domain/scram.ts';
 import type { Hono } from 'hono';
 import { openDatabase } from '../../src/store/db.ts';
 import { createRepositories, type Repositories } from '../../src/store/repo.ts';
@@ -49,7 +50,7 @@ function config(withToken: boolean): Config {
   };
 }
 
-function build(withToken = true): void {
+function build(withToken = true, withCatalog = false): void {
   const cfg = config(withToken);
   repos = createRepositories(openDatabase(':memory:'));
   bootstrapForTest(repos, cfg.identity);
@@ -59,7 +60,7 @@ function build(withToken = true): void {
     repos, pageserver: fakes.pageserver, docker: fakes.docker, compute: fakes.compute,
     signer: createComputeSigner('test'), config: cfg, logger: nullLogger,
   });
-  app = authed(createApp({ repos, service, config: cfg, logger: nullLogger, reconciler }));
+  app = authed(createApp({ repos, service, config: cfg, logger: nullLogger, reconciler, ...(withCatalog ? { compute: fakes.compute } : {}) }));
 }
 
 async function seed(): Promise<{ projectId: string; endpointId: string; branchId: string }> {
@@ -80,6 +81,63 @@ beforeEach(() => build());
 afterAll(() => rmSync(workdir, { recursive: true, force: true }));
 
 describe('proxy control-plane API', () => {
+  it('authenticates SQL-created roles from the signed catalog without adding them to the managed spec', async () => {
+    build(true, true);
+    const { endpointId, branchId } = await seed();
+    const first = scramSha256('first-test-password');
+    const second = scramSha256('second-test-password');
+    const read = vi.spyOn(fakes.compute, 'dbsAndRoles').mockResolvedValue({
+      databases: [], roles: [{ name: 'site_aabbcc11', encrypted_password: first }],
+    });
+    const url = `/cplane/get_endpoint_access_control?endpointish=${endpointId}&role=site_aabbcc11`;
+    expect((await app.request(url)).status).toBe(401);
+    expect(read).not.toHaveBeenCalled();
+    const response = await app.request(url, { headers: auth });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ role_secret: first });
+    expect(read).toHaveBeenCalledWith({ baseUrl: `http://127.0.0.1:${repos.endpoints.get(endpointId)!.http_port}`, computeId: endpointId });
+    expect(repos.endpoints.get(endpointId)?.current_state).toBe('active');
+    expect(repos.roles.get(branchId, 'site_aabbcc11')).toBeUndefined();
+    expect(JSON.stringify(fakes.state.specs)).not.toContain('site_aabbcc11');
+    // No CP verifier cache: a rotation or deletion must be observed on the next lookup.
+    read.mockResolvedValue({ databases: [], roles: [{ name: 'site_aabbcc11', encrypted_password: second }] });
+    expect(await (await app.request(url, { headers: auth })).json()).toMatchObject({ role_secret: second });
+    read.mockResolvedValue({ databases: [], roles: [] });
+    expect((await app.request(url, { headers: auth })).status).toBe(404);
+  });
+
+  it('never falls back to a stored verifier after a catalog failure, and redacts adapter errors', async () => {
+    build(true, true);
+    const { endpointId } = await seed();
+    const sensitive = 'SCRAM-SHA-256$4096:private$private:private';
+    vi.spyOn(fakes.compute, 'dbsAndRoles').mockRejectedValue(new Error(sensitive));
+    const logs = vi.spyOn(nullLogger, 'error');
+    try {
+      const response = await app.request(`/cplane/get_endpoint_access_control?endpointish=${endpointId}&role=neondb_owner`, { headers: auth });
+      expect(response.status).toBe(500);
+      expect(await response.text()).not.toContain(sensitive);
+      expect(JSON.stringify(logs.mock.calls)).not.toContain(sensitive);
+    } finally { logs.mockRestore(); }
+  });
+
+  it('rejects disabled endpoints, reserved roles, and malformed catalog verifiers', async () => {
+    build(true, true);
+    const { endpointId } = await seed();
+    const read = vi.spyOn(fakes.compute, 'dbsAndRoles').mockResolvedValue({
+      databases: [], roles: [{ name: 'site_aabbcc11', encrypted_password: 'not-a-verifier' }],
+    });
+    for (const role of ['cloud_admin', 'pg_read_all_data']) {
+      expect((await app.request(`/cplane/get_endpoint_access_control?endpointish=${endpointId}&role=${role}`, { headers: auth })).status).toBe(404);
+    }
+    expect(read).not.toHaveBeenCalled();
+    const url = `/cplane/get_endpoint_access_control?endpointish=${endpointId}&role=site_aabbcc11`;
+    expect((await app.request(url, { headers: auth })).status).toBe(404);
+    read.mockClear();
+    repos.endpoints.update(endpointId, { disabled: 1 });
+    expect((await app.request(url, { headers: auth })).status).toBe(400);
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it('returns the access-control shape the proxy deserialises', async () => {
     const { projectId, endpointId } = await seed();
     const response = await app.request(
@@ -206,7 +264,7 @@ describe('proxy control-plane API', () => {
     return list.projects[0]!.id;
   }
 
-  it('refuses a request without the proxy token, and allows one when no token is configured', async () => {
+  it('refuses missing, wrong, and unconfigured proxy authentication', async () => {
     const { endpointId } = await seed();
     expect((await app.request(`/cplane/wake_compute?endpointish=${endpointId}`)).status).toBe(401);
     expect((await app.request(`/cplane/wake_compute?endpointish=${endpointId}`, { headers: { authorization: 'Bearer wrong' } })).status).toBe(401);
@@ -214,7 +272,7 @@ describe('proxy control-plane API', () => {
     build(false);
     const seeded = await seed();
     await reconciler.drain();
-    expect((await app.request(`/cplane/wake_compute?endpointish=${seeded.endpointId}`)).status).toBe(200);
+    expect((await app.request(`/cplane/wake_compute?endpointish=${seeded.endpointId}`)).status).toBe(401);
   });
 
   it('refuses a disabled endpoint', async () => {

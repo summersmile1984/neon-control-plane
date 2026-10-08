@@ -93,6 +93,35 @@ describe('health', () => {
 });
 
 describe('projects', () => {
+  it('applies roles and databases created after a starting compute has captured its spec', async () => {
+    const created = await createProject();
+    const projectId = (created.project as Record<string, unknown>).id as string;
+    const branchId = (created.branch as Record<string, unknown>).id as string;
+    let release!: () => void;
+    let started!: () => void;
+    const captured = new Promise<void>((resolve) => { started = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const waitForStatus = fakes.compute.waitForStatus;
+    fakes.compute.waitForStatus = async (...args) => { started(); await gate; return waitForStatus(...args); };
+    const starting = reconciler.tick();
+    await captured;
+    try {
+      const role = await app.request(`/api/v2/projects/${projectId}/branches/${branchId}/roles`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ role: { name: 'owner-after-start' } }),
+      });
+      expect(role.status).toBe(201);
+      const database = await app.request(`/api/v2/projects/${projectId}/branches/${branchId}/databases`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ database: { name: 'after_start', owner_name: 'owner-after-start' } }),
+      });
+      expect(database.status).toBe(201);
+      expect(fakes.state.configureCalls).toHaveLength(0);
+    } finally { release(); await starting; }
+    await reconciler.drain();
+    const applied = JSON.stringify(fakes.state.configureCalls.at(-1)?.spec);
+    expect(applied).toContain('owner-after-start');
+    expect(applied).toContain('after_start');
+  });
+
   it('creates a project with a branch, role, database, endpoint and connection uri', async () => {
     const body = await createProject();
     const project = body.project as Record<string, unknown>;

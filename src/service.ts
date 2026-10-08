@@ -108,8 +108,11 @@ export function createService(deps: ServiceDeps): Service {
   }
 
   function queueApplyConfig(branch: BranchRow, deltaOperations: DeltaOperation[] = []): OperationRow[] {
-    const active = repos.endpoints.listByBranch(branch.id).filter((row) => row.current_state === 'active');
-    if (active.length === 0 && deltaOperations.length === 0) return [];
+    // A starting compute may already have captured its spec. Queue behind its
+    // start operation as well, or a concurrent role/database create is lost
+    // from the live catalog until a later restart. Operations serialize by branch.
+    const endpoints = repos.endpoints.listByBranch(branch.id);
+    if (endpoints.length === 0 && deltaOperations.length === 0) return [];
     return [repos.operations.insert({
       id: generateOperationId(),
       project_id: branch.project_id,

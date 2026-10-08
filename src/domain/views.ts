@@ -18,6 +18,7 @@ export interface ViewContext {
 const bool = (value: number): boolean => value !== 0;
 
 export function projectView(row: ProjectRow, context: ViewContext): Record<string, unknown> {
+  const annotation = JSON.parse(row.annotation_json) as Record<string, unknown>;
   return {
     id: row.id,
     platform_id: row.platform_id,
@@ -33,7 +34,10 @@ export function projectView(row: ProjectRow, context: ViewContext): Record<strin
     history_retention_seconds: row.history_retention_seconds,
     created_at: row.created_at,
     updated_at: row.updated_at,
-    owner_id: context.ownerId,
+    owner_id: row.org_id ?? context.ownerId,
+    org_id: row.org_id ?? context.ownerId,
+    ...(row.default_branch_id ? { default_branch_id: row.default_branch_id } : {}),
+    ...(Object.keys(annotation).length > 0 ? { annotation_value: annotation } : {}),
     default_endpoint_settings: {},
     settings: JSON.parse(row.settings_json) as Record<string, unknown>,
     // consumption counters: required by the spec, always zero here

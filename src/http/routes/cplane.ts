@@ -2,6 +2,7 @@ import type { Context, Hono } from 'hono';
 import type { AppDeps, AppEnv } from '../app.ts';
 import { ApiError, errors } from '../errors.ts';
 import type { EndpointRow } from '../../store/rows.ts';
+import { computeTarget } from '../../reconciler/actions.ts';
 
 /**
  * The private API the Neon proxy calls (002 §10, T-301). Shapes come from the proxy source
@@ -68,7 +69,7 @@ export function registerCplaneRoutes(app: Hono<AppEnv>, deps: AppDeps): void {
   const { repos, config, logger } = deps;
 
   const guard = (header: string | undefined): void => {
-    if (!config.proxyToken) return;
+    if (!config.proxyToken) throw errors.unauthorized('proxy authentication is not configured');
     const match = /^Bearer\s+(.+)$/i.exec((header ?? '').trim());
     if (!match || match[1]!.trim() !== config.proxyToken) throw errors.unauthorized('proxy token is missing or invalid');
   };
@@ -83,7 +84,8 @@ export function registerCplaneRoutes(app: Hono<AppEnv>, deps: AppDeps): void {
         const retryDelay = error.httpStatus === 423 ? 1000 : undefined;
         return cplaneError(c, error, retryDelay);
       }
-      logger.error('cplane request failed', { error: error instanceof Error ? error.message : String(error) });
+      // Compute responses can contain password verifiers. Never log an adapter's raw body/error.
+      logger.error('cplane request failed', { code: 'COMPUTE_CONTROL_UNAVAILABLE' });
       return cplaneError(c, errors.internal());
     }
   };
@@ -98,22 +100,61 @@ export function registerCplaneRoutes(app: Hono<AppEnv>, deps: AppDeps): void {
     app.get(`${CPLANE_PREFIX}//${name}`, cplane(handler));
   };
 
-  method('get_endpoint_access_control', (c) => {
+  async function ensureActive(endpoint: EndpointRow): Promise<EndpointRow> {
+    if (endpoint.disabled || endpoint.deleted_at) throw errors.badRequest('endpoint is unavailable');
+    if (endpoint.current_state !== 'active') {
+      const { reconciler } = deps;
+      if (!reconciler) throw errors.internal('no reconciler is attached');
+      if (!repos.operations.hasActiveFor({ endpoint_id: endpoint.id })) deps.service.startEndpoint(endpoint);
+      const deadline = Date.now() + WAKE_TIMEOUT_MS;
+      while (repos.endpoints.get(endpoint.id)?.current_state !== 'active' && Date.now() < deadline) {
+        const ran = await reconciler.drain();
+        if (ran === 0) await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      if (repos.endpoints.get(endpoint.id)?.current_state !== 'active') {
+        throw errors.runningOperations(`endpoint ${endpoint.id} is still starting`);
+      }
+      logger.info('woke a compute for the proxy', { endpoint_id: endpoint.id });
+    }
+    repos.endpoints.touchActivity(endpoint.id);
+    return repos.endpoints.get(endpoint.id)!;
+  }
+
+  method('get_endpoint_access_control', async (c) => {
     guard(c.req.header('authorization'));
     const endpointish = c.req.query('endpointish');
     const role = c.req.query('role');
     if (!endpointish || !role) throw errors.badRequest('endpointish and role are required');
 
     const endpoint = resolveEndpoint(deps, endpointish);
+    if (endpoint.disabled || endpoint.deleted_at) throw errors.badRequest('endpoint is unavailable');
+    if (role === 'cloud_admin' || role.startsWith('pg_')) throw errors.roleNotFound(role);
     const roleRow = repos.roles.get(endpoint.branch_id, role);
-    if (!roleRow?.scram_secret) throw errors.roleNotFound(role);
+    if (roleRow?.no_login) throw errors.roleNotFound(role);
     const project = repos.projects.get(endpoint.project_id);
-    if (!project) throw errors.projectNotFound(endpoint.project_id);
+    if (!project || project.deleted_at) throw errors.projectNotFound(endpoint.project_id);
+
+    let roleSecret = roleRow?.scram_secret;
+    if (deps.compute) {
+      // SQL-created app/site roles must remain outside cluster.roles: adding them to that spec
+      // promotes them to neon_superuser on configure/start. Read the live catalog through the
+      // existing signed compute_ctl API instead; never persist it into the managed-role ledger.
+      // Also read managed roles live so SQL password changes/deletions cannot use a stale verifier.
+      const fresh = await ensureActive(endpoint);
+      const catalog = await deps.compute.dbsAndRoles(computeTarget(fresh));
+      const matches = catalog.roles.filter((entry): entry is Record<string, unknown> =>
+        typeof entry === 'object' && entry !== null && 'name' in entry && entry.name === role);
+      roleSecret = matches.length === 1 && typeof matches[0]!.encrypted_password === 'string'
+        ? matches[0]!.encrypted_password : undefined;
+    }
+    if (!roleSecret || !/^SCRAM-SHA-256\$[1-9]\d*:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/.test(roleSecret)) {
+      throw errors.roleNotFound(role);
+    }
 
     logger.debug('proxy asked for access control', { endpoint_id: endpoint.id, role });
     return c.json({
       // The proxy runs SCRAM against this verifier itself; the plaintext never leaves the control plane.
-      role_secret: roleRow.scram_secret,
+      role_secret: roleSecret,
       allowed_ips: [],
       allowed_vpc_endpoint_ids: [],
       block_public_connections: false,
@@ -129,32 +170,8 @@ export function registerCplaneRoutes(app: Hono<AppEnv>, deps: AppDeps): void {
     if (!endpointish) throw errors.badRequest('endpointish is required');
 
     const endpoint = resolveEndpoint(deps, endpointish);
-    if (endpoint.disabled) throw errors.badRequest(`endpoint ${endpoint.id} is disabled`);
     const wasActive = endpoint.current_state === 'active';
-
-    if (!wasActive) {
-      const { reconciler } = deps;
-      if (!reconciler) throw errors.internal('no reconciler is attached');
-      if (!repos.operations.hasActiveFor({ endpoint_id: endpoint.id })) deps.service.startEndpoint(endpoint);
-
-      // The proxy blocks on this call while a client waits for its connection, so drive the
-      // operation here instead of waiting for the background tick. `claimNext` is a CAS, so a
-      // concurrent background tick cannot run the same step twice.
-      const deadline = Date.now() + WAKE_TIMEOUT_MS;
-      let state = repos.endpoints.get(endpoint.id)?.current_state;
-      while (state !== 'active' && Date.now() < deadline) {
-        const ran = await reconciler.drain();
-        // Nothing claimable means another worker holds the operation; give it a moment.
-        if (ran === 0) await new Promise((resolve) => setTimeout(resolve, 250));
-        state = repos.endpoints.get(endpoint.id)?.current_state;
-      }
-      // The proxy treats this class as retryable and will ask again.
-      if (state !== 'active') throw errors.runningOperations(`endpoint ${endpoint.id} is still starting`);
-      logger.info('woke a compute for the proxy', { endpoint_id: endpoint.id });
-    }
-
-    repos.endpoints.touchActivity(endpoint.id);
-    const fresh = repos.endpoints.get(endpoint.id)!;
+    const fresh = await ensureActive(endpoint);
     return c.json({
       // Inside the compose network the compute answers on its container name and internal port.
       address: `${fresh.id}:55433`,
