@@ -106,7 +106,12 @@ jobs:
       # skip are exactly the interesting ones: SCRAM through the official proxy, wake-on-connect,
       # tenant isolation. Run them too rather than gate a release on half a suite.
       - name: Issue a wildcard certificate for the proxy
-        run: node scripts/create-local-tls.mjs --output "$RUNNER_TEMP/proxy-certs" --zone db.siteops.localhost
+        run: |
+          node scripts/create-local-tls.mjs --output "$RUNNER_TEMP/proxy-certs" --zone db.siteops.localhost
+          # create-local-tls.mjs writes 0600 because these are local credentials. The proxy container
+          # runs as uid 1000 while the runner owns them, so widen to "any user can read, nobody can
+          # write" or the proxy exits before it binds.
+          chmod -R a+rX "$RUNNER_TEMP/proxy-certs"
       - name: Start the official Neon proxy
         env:
           PROXY_PORT: 5434
@@ -114,6 +119,17 @@ jobs:
           CP_PORT: 8080
           CP_PROXY_TOKEN: local-proxy-token
         run: docker compose -f infra/compose/docker-compose.yml --profile proxy up -d proxy
+      - name: Wait for the proxy to accept Postgres connections
+        # preflight() turns an unreachable proxy into a *skip*, which once hid a proxy that had
+        # exited outright. Here it has to be a failure, with the proxy's own logs attached.
+        run: |
+          for attempt in $(seq 1 30); do
+            if (echo > /dev/tcp/127.0.0.1/5434) 2>/dev/null; then exit 0; fi
+            sleep 2
+          done
+          echo "the proxy never opened 5434"
+          docker compose -f infra/compose/docker-compose.yml --profile proxy logs --tail=100 proxy
+          exit 1
       - name: Restart the control plane (proxy routing)
         env:
           CP_PORT: 8080
