@@ -129,11 +129,11 @@ cp .env.example .env
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 
 cp infra/compose/.env.example infra/compose/.env
-pnpm compose:up     # pageserver + safekeeper + storage_broker + MinIO（约 1.9 GB 镜像）
+pnpm compose:up     # pageserver + safekeeper + storage_broker + 对象存储（约 9 GB 镜像）
 pnpm dev            # 控制面监听 :8080
 ```
 
-MinIO 的宿主机 API/控制台端口默认为 `19000`/`19001`，可在 `infra/compose/.env` 中通过 `NEON_MINIO_API_PORT`/`NEON_MINIO_CONSOLE_PORT` 覆盖；容器网络仍使用 `minio:9000`。因此可与 `siteops-platform` 本地栈的宿主机 `9000`/`9001` 并行运行。`compose:down` 会删除卷，不能用于无损停机或冒烟测试。
+对象存储用 **rustfs**（MinIO 的镜像已全部下架：Docker Hub 上每个 tag 都 404，quay.io 匿名拉取返回 401，只有还缓存着旧镜像的机器能跑）。服务名仍叫 `minio`，宿主机 API/控制台端口默认 `19000`/`19001`，可用 `NEON_MINIO_API_PORT`/`NEON_MINIO_CONSOLE_PORT` 覆盖，容器网络仍是 `minio:9000`，因此可与 `siteops-platform` 本地栈的宿主机 `9000`/`9001` 并行运行；换别的 S3 实现用 `NEON_S3_IMAGE`。`compose:down` 会删除卷，不能用于无损停机或冒烟测试。
 
 首启会从 env 播种一个 owner、一个组织。设 `CP_BOOTSTRAP_API_KEY` 可以在启动时直接得到第一把 key：
 
@@ -442,7 +442,7 @@ src/
   console/index.html       单文件运维控制台（无构建、无 CDN）
 tests/
   unit/ contract/ e2e/ browser/ support/
-infra/compose/             本地栈（pageserver/safekeeper/storage_broker/MinIO/proxy）
+infra/compose/             本地栈（pageserver/safekeeper/storage_broker/对象存储/proxy）
 spec/                      vendored 官方 OpenAPI + SUBSET.md
 docs/design/ docs/notes/   设计文档与真机实测笔记
 ```
