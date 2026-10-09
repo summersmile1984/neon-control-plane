@@ -40,7 +40,11 @@ test('the console has no serious or critical accessibility violations', async ({
   // Wait for the operation stream to actually overflow its own card, otherwise this test would
   // pass on an empty console forever.
   await expect
-    .poll(() => page.locator('#operations').evaluate((node) => (node as HTMLElement).scrollHeight > (node as HTMLElement).clientHeight + 1))
+    .poll(() => page.locator('#operations').evaluate((node) => {
+      // The suite typechecks without the DOM lib, so read the metrics structurally.
+      const box = node as unknown as { scrollHeight: number; clientHeight: number };
+      return box.scrollHeight > box.clientHeight + 1;
+    }))
     .toBe(true);
 
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
