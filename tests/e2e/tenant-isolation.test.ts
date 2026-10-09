@@ -5,10 +5,9 @@ import {
 } from '../support/live.ts';
 
 /**
- * T-306 / SaaS-011.5: two workspaces on one local stack must not be able to reach each other.
- *
- * One consumer maps one workspace to one Neon project, so this is the isolation that
- * multi-tenancy rests on. The layers under test, from the bottom up:
+ * Two projects on one local stack must not be able to reach each other. That is the isolation the
+ * v2 API promises — a project is a boundary, not a label — and it is enforced by four layers. From
+ * the bottom up:
  *
  *   storage   one pageserver tenant per project, one timeline per branch
  *   compute   one container per endpoint, its own PGDATA, its own port

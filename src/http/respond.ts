@@ -29,6 +29,21 @@ export function assertValidBody(schemaName: string, body: unknown): void {
   throw errors.internal(`response does not match ${schemaName}: ${message}`);
 }
 
+/**
+ * The other half of the contract: every failure leaves through `GeneralError`, which the spec types
+ * as `{ message, code, request_id? }`. `code` is a free string there, so this only guarantees the
+ * envelope — but an error path that forgets a field, or a third-party error surfacing raw, would
+ * otherwise ship silently. Returns the fallback error when the body does not fit.
+ */
+export function validatedErrorBody(body: unknown): unknown {
+  if (!options.validate) return body;
+  const spec = validators();
+  if (spec.get('GeneralError')(body)) return body;
+  const message = spec.errorText('GeneralError');
+  options.onInvalid?.('GeneralError', message, body);
+  return errors.internal().toBody();
+}
+
 export function respond<T>(c: Context, schemaName: string, body: T, status = 200): Response {
   assertValidBody(schemaName, body);
   return c.json(body as object, status as 200);

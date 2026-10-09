@@ -66,7 +66,7 @@ Neon 开源了数据面的全部组件——pageserver、safekeeper、storage_br
 | **M4** | 多 safekeeper / storage_controller / K8s | **不做**（不解决本地开发问题） |
 | **M5** | API key 管理、鉴权、身份面、控制台登录 | 完成 |
 
-M0–M3 用真东西证过（非 mock）：官方 `neonctl` 与 `@neon/sdk` 能对着它建项目、建分支、取连接串；官方 Neon proxy 在前做 TLS + SNI + SCRAM + 按需唤醒；`psql` 直连 compute 跑通 DDL/DML；Directus 用本控制面发的连接串跑完所有引导迁移。
+M0–M3 用真东西证过（非 mock）：官方 `neonctl` 与 `@neon/sdk` 能对着它建项目、建分支、取连接串；官方 Neon proxy 在前做 TLS + SNI + SCRAM + 按需唤醒；`psql` 直连 compute 跑通 DDL/DML。
 
 `pg_sni_router` 实测后放弃：它在 Neon 连接串的单标签主机名上直接 panic，且不做鉴权、不能唤醒挂起的 compute（见 [003](docs/design/003_任务分解与验收清单.md) T-201）。proxy 覆盖其全部用途。
 
@@ -240,7 +240,7 @@ token 前缀默认 `napi_`（`CP_KEY_PREFIX` 可改），只在**创建时回显
 
 后两档 URI 省略端口并带 `sslmode=require&channel_binding=require`，与 Neon 云端下发的连接串形状一致。
 
-**容器内的客户端**（如 Directus）看到的 proxy 是 `host.docker.internal`，端点 id 无法塞进该主机名，用 Neon 的启动包回退参数即可（不依赖 DNS）：
+**容器内的客户端**看到的 proxy 是 `host.docker.internal`，端点 id 无法塞进该主机名，用 Neon 的启动包回退参数即可（不依赖 DNS）：
 
 ```
 postgresql://<role>:<pw>@host.docker.internal:5434/<db>?sslmode=no-verify&options=endpoint%3D<endpoint_id>
@@ -355,12 +355,14 @@ node scripts/create-local-tls.mjs --output data/neon-tls --zone db.neon.localhos
 
 | 层 | 命令 | 依赖 | 规模 |
 |---|---|---|---|
-| 单元 | `pnpm test:unit` | 无 | 82（session / bootstrap / guard / migration / auth / repo / scram / ids / secrets / connection-uri / spec-builder） |
-| 契约 | `pnpm test:contract` | 无（内存 SQLite + 假 adapter） | 116（含 key 生命周期、成员/越权矩阵、console 登录，全部过官方 schema） |
-| 端到端 | `pnpm test:e2e` | 真 pageserver / safekeeper / compute、proxy、psql | 38（缺前置条件自动 skip） |
-| 浏览器 | `pnpm test:browser` | Playwright（系统 Chrome）+ 真控制面；项目用例需 compose | 11 |
+| 单元 | `pnpm test:unit` | 无 | 98（auth / guard / scram / ids / secrets / spec-builder / repo / migration / 端口与归属） |
+| 契约 | `pnpm test:contract` | 无（内存 SQLite + 假 adapter） | 230（管理 API 的成功与失败两面，全部过官方 schema） |
+| 端到端 | `pnpm test:e2e` | 真 pageserver / safekeeper / compute、proxy、psql | 29（direct 档跑 18 条，proxy 档跑全部 29 条） |
+| 浏览器 | `pnpm test:browser` | Playwright + 真控制面 + compose | 11（控制台） |
 
 `pnpm verify` = `typecheck + lint + test:unit + test:contract`。`pnpm test:coverage` 生成文本报告与 `coverage/index.html`（unit + contract）。
+
+**这套测试测什么、不测什么**：管理 API（`/api/v2` 的 49 条路由）由契约层逐条覆盖——`route-coverage` 保证每条路由都有测试调用，`error-surface` 保证每条带参数的路由在资源不存在时回 `GeneralError` 而不是 500；e2e 再在真栈上验证其中 12 条真的落到了 pageserver 与 compute。仓库自带的运维控制台有它自己的浏览器层，它点的每个动作都打真实的 `/api/v2`。**没有**针对第三方应用（CMS 之类）的用例：那测的是那个应用，不是管理 API。基础设施层（SQLite 迁移、端口分配、孤儿回收）有自己的单元测试，它们保护 API 脚下踩着的东西，但不断言任何 API 行为。
 
 ### 端到端（e2e）
 
@@ -378,9 +380,8 @@ CP_API_KEY=napi_local_e2e_key CP_ROUTE_MODE=proxy CP_PROXY_PORT=5434 pnpm test:e
 | `data-plane` | **数据面最终效果**：项目在 pageserver 里真有 tenant + timeline；库/角色存在；DDL（create table/index/alter）与 DML（insert/update/delete/select、事务回滚）真实执行并读回；连接串凭据真能登录 |
 | `proxy-connect` | psql 经官方 proxy 连上（SNI 与启动包两种寻址）；错口令被拒；挂起后冷启动唤醒并保留数据 |
 | `tenant-isolation` | 两租户各自 tenant/timeline/compute/role/db；拿 A 凭据连 B endpoint 被拒；删 A 后 B 完好 |
-| `directus-on-control-plane` | Directus 迁移落在控制面起的 compute；挂起后下一请求恢复 |
 
-前置条件缺失时用例**报跳过而不是失败**（`context.skip(reason)`）：没起控制面、`CP_API_KEY` 未设或 401、没起 proxy、`psql` 不在 PATH、本地没有 Directus 测试镜像（`DIRECTUS_IMAGE` 指定）。
+前置条件缺失时用例**报跳过而不是失败**（`context.skip(reason)`）：没起控制面、`CP_API_KEY` 未设或 401、没起 proxy、`psql` 不在 PATH。CI 里两档合起来没有常驻跳过项。
 
 ### 浏览器（console E2E）
 

@@ -7,6 +7,7 @@ import type { Service } from '../service.ts';
 import type { Reconciler } from '../reconciler/loop.ts';
 import type { ViewContext } from '../domain/views.ts';
 import { ApiError, errors } from './errors.ts';
+import { validatedErrorBody } from './respond.ts';
 import { apiAuth } from './auth.ts';
 import { orgGuard, projectGuard } from './guard.ts';
 import { registerProjectRoutes, registerSharedProjectsRoute } from './routes/projects.ts';
@@ -61,18 +62,18 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     if (error instanceof ApiError) {
       if (error.httpStatus >= 500) deps.logger.error('request failed', { request_id: requestId, code: error.code, error: error.message });
       if (forProxy(c)) return c.json(cplaneErrorBody(error.message, error.httpStatus), error.httpStatus as 400);
-      return c.json({ ...error.toBody(), request_id: requestId }, error.httpStatus as 400);
+      return c.json(validatedErrorBody({ ...error.toBody(), request_id: requestId }), error.httpStatus as 400);
     }
     deps.logger.error('unhandled error', { request_id: requestId, error: error instanceof Error ? error.message : String(error) });
     const internal = errors.internal();
     if (forProxy(c)) return c.json(cplaneErrorBody(internal.message, 500), 500);
-    return c.json({ ...internal.toBody(), request_id: requestId }, 500);
+    return c.json(validatedErrorBody({ ...internal.toBody(), request_id: requestId }), 500);
   });
 
   app.notFound((c) => {
     const notFound = errors.notImplemented(`${c.req.method} ${new URL(c.req.url).pathname}`);
     if (forProxy(c)) return c.json(cplaneErrorBody(notFound.message, 404), 404);
-    return c.json({ code: 'RESOURCE_NOT_FOUND', message: notFound.message, request_id: c.get('requestId') }, 404);
+    return c.json(validatedErrorBody({ code: 'RESOURCE_NOT_FOUND', message: notFound.message, request_id: c.get('requestId') }), 404);
   });
 
   app.get('/healthz', (c) => c.json({ status: 'ok' }));
