@@ -21,7 +21,10 @@ services:
     networks: [neon-cp]
 
   minio_create_buckets:
-    image: minio/mc
+    # The standalone minio/mc client is no longer pullable from Docker Hub (`minio/mc` now 404s,
+    # which broke `compose up` on CI). The MinIO server image bundles the same `mc` binary, and
+    # this repository is still the one the stack already pulls.
+    image: quay.io/minio/minio:${MINIO_CLIENT_TAG:-RELEASE.2025-04-22T22-12-26Z}
     environment:
       - MINIO_ROOT_USER=minio
       - MINIO_ROOT_PASSWORD=password
