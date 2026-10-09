@@ -34,3 +34,126 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Verify unit and contract behavior without Docker or cloud credentials
         run: pnpm verify
+
+  # The real stack: pageserver + safekeeper + storage_broker + one compute container per endpoint.
+  # It is the only tier that proves a project actually materialises, so it gates every PR — but it
+  # pulls ~9 GB of images, hence the generous timeout and the pre-pull below.
+  e2e:
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout immutable source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Configure Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.18.0
+      - name: Configure pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.16.1 --activate
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Start the Neon storage layer
+        # Not `--wait`: the one-shot `minio_create_buckets` job exits 0 and compose --wait still
+        # exits 1 on it. Wait for the pageserver instead — that is what the control plane drives.
+        run: |
+          docker compose -f infra/compose/docker-compose.yml up -d
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9898/v1/status; then exit 0; fi
+            sleep 3
+          done
+          echo "pageserver never became ready"
+          docker compose -f infra/compose/docker-compose.yml logs --tail=200
+          exit 1
+      - name: Pre-pull the compute image
+        # start_compute waits 120s for the compute to report running; on a cold runner that budget
+        # would be spent on the pull. The suite only creates pg_version 17 projects.
+        run: docker pull docker.io/neondatabase/compute-node-v17:latest
+      - name: Generate the control plane master key
+        # Written once so the direct-mode and proxy-mode runs below share one key: role passwords
+        # sealed in data/ci-e2e.sqlite would not decrypt under a second one.
+        run: echo "CP_MASTER_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")" >> "$GITHUB_ENV"
+      - name: Start the control plane (direct routing)
+        env:
+          CP_PORT: 8080
+          CP_DB_PATH: data/ci-e2e.sqlite
+          CP_COMPUTE_VOLUME_ROOT: data/ci-computes
+          CP_PORT_RANGE: 55500-55700
+          CP_ROUTE_MODE: direct
+          CP_BOOTSTRAP_API_KEY: napi_ci_e2e_key
+        run: |
+          nohup node --experimental-strip-types --env-file-if-exists=.env src/index.ts \
+            > "$RUNNER_TEMP/control-plane.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/control-plane.pid"
+      - name: Wait for the control plane to be ready
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/readyz; then exit 0; fi
+            sleep 2
+          done
+          echo "control plane never became ready"; cat "$RUNNER_TEMP/control-plane.log"; exit 1
+      - name: Run the e2e tier against the live stack (direct routing)
+        env:
+          CP_BASE_URL: http://127.0.0.1:8080
+          CP_API_KEY: napi_ci_e2e_key
+          CP_PAGESERVER_URL: http://127.0.0.1:9898
+        run: pnpm test:e2e
+      # 20 of the 38 e2e tests skip unless the control plane is in proxy mode, and the ones that
+      # skip are exactly the interesting ones: SCRAM through the official proxy, wake-on-connect,
+      # tenant isolation. Run them too rather than gate a release on half a suite.
+      - name: Issue a wildcard certificate for the proxy
+        run: node scripts/create-local-tls.mjs --output "$RUNNER_TEMP/proxy-certs" --zone db.siteops.localhost
+      - name: Start the official Neon proxy
+        env:
+          PROXY_PORT: 5434
+          PROXY_CERT_DIR: ${{ runner.temp }}/proxy-certs
+          CP_PORT: 8080
+          CP_PROXY_TOKEN: local-proxy-token
+        run: docker compose -f infra/compose/docker-compose.yml --profile proxy up -d proxy
+      - name: Restart the control plane (proxy routing)
+        env:
+          CP_PORT: 8080
+          CP_DB_PATH: data/ci-e2e.sqlite
+          CP_COMPUTE_VOLUME_ROOT: data/ci-computes
+          CP_PORT_RANGE: 55500-55700
+          CP_ROUTE_MODE: proxy
+          CP_BOOTSTRAP_API_KEY: napi_ci_e2e_key
+          CP_PROXY_TOKEN: local-proxy-token
+        run: |
+          kill "$(cat "$RUNNER_TEMP/control-plane.pid")" || true
+          for attempt in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8080/readyz >/dev/null 2>&1 || break
+            sleep 1
+          done
+          nohup node --experimental-strip-types --env-file-if-exists=.env src/index.ts \
+            > "$RUNNER_TEMP/control-plane-proxy.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/control-plane.pid"
+      - name: Wait for the proxy-mode control plane to be ready
+        run: |
+          for attempt in $(seq 1 60); do
+            mode=$(curl -fsS http://127.0.0.1:8080/readyz | grep -o '"route_mode":"[a-z]*"' || true)
+            if [ "$mode" = '"route_mode":"proxy"' ]; then exit 0; fi
+            sleep 2
+          done
+          echo "control plane never reported proxy mode"
+          cat "$RUNNER_TEMP/control-plane-proxy.log"
+          exit 1
+      - name: Run the e2e tier through the official proxy
+        env:
+          CP_BASE_URL: http://127.0.0.1:8080
+          CP_API_KEY: napi_ci_e2e_key
+          CP_PAGESERVER_URL: http://127.0.0.1:9898
+          CP_PROXY_PORT: 5434
+        run: pnpm test:e2e
+      - name: Show what the control plane and storage layer logged
+        if: failure()
+        run: |
+          cat "$RUNNER_TEMP"/control-plane*.log 2>/dev/null || true
+          docker compose -f infra/compose/docker-compose.yml --profile proxy logs --tail=200
+      - name: Stop the stack
+        if: always()
+        run: docker compose -f infra/compose/docker-compose.yml down -v

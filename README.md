@@ -462,6 +462,20 @@ docs/design/ docs/notes/   设计文档与真机实测笔记
 | `pnpm spec:facts` | 升级 `spec/neon-api-v2.json` 后先跑，核对 spec 事实 |
 | `pnpm probe:pageserver` / `probe:compute` | 真机探测脚本 |
 
+## 发布
+
+版本号只有一处来源：`package.json` 的 `version`。
+
+- `ci`：每个 PR 与 `main` 推送跑两个 job。`quality` 是 `pnpm verify`（无 Docker、秒级）；`e2e` 起真栈（pageserver + safekeeper + 一个 compute 容器），先在 `direct` 档跑一遍，再签自签证书、起官方 proxy、切到 `proxy` 档跑第二遍——否则 38 条里会有 20 条被跳过，跳掉的恰好是 proxy SCRAM、连接唤醒、租户隔离这些。
+- `release`：推送 `v*` tag 时触发，先校验 tag 与 `package.json` 版本一致，再用 `gh` 建 GitHub Release，notes 按提交自动生成。
+
+```bash
+# 改 package.json 的 version → 提交推送 → 等 CI 绿 → 打同名 tag
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+打错了就删掉重来：`gh release delete v0.1.0 && git push --delete origin v0.1.0`，改完再打。发布只发源码快照，不发 npm 包（本项目 `private: true`）也不发镜像（仓库没有 Dockerfile）。
+
 ## 设计文档与 spec
 
 | 文档 | 内容 |
