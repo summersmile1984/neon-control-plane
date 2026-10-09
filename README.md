@@ -464,7 +464,7 @@ docs/design/ docs/notes/   设计文档与真机实测笔记
 
 版本号只有一处来源：`package.json` 的 `version`。
 
-- `ci`：每个 PR 与 `main` 推送跑两个 job。`quality` 是 `pnpm verify`（无 Docker、秒级）；`e2e` 起真栈（pageserver + safekeeper + 一个 compute 容器），先在 `direct` 档跑一遍，再签自签证书、起官方 proxy、切到 `proxy` 档跑第二遍——否则 38 条里会有 20 条被跳过，跳掉的恰好是 proxy SCRAM、连接唤醒、租户隔离这些。
+- `ci`：每个 PR 与 `main` 推送跑三个 job。`quality` 是 `pnpm verify`（无 Docker、秒级，含"每条路由都被某个测试引用"的覆盖守卫）；`e2e` 起真栈（pageserver + safekeeper + 一个 compute 容器），先在 `direct` 档跑一遍，再签自签证书、起官方 proxy、切到 `proxy` 档跑第二遍——否则 38 条里会有 20 条被跳过，跳掉的恰好是 proxy SCRAM、连接唤醒、租户隔离这些；`browser` 用 Playwright 起自己的控制面与假 OIDC 提供方，跑控制台登录/会话/建 key/成员/项目生命周期与可访问性。
 - `release`：推送 `v*` tag 时触发，先校验 tag 与 `package.json` 版本一致，再用 `gh` 建 GitHub Release，notes 按提交自动生成。
 
 ```bash

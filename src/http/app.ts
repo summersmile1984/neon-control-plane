@@ -9,7 +9,7 @@ import type { ViewContext } from '../domain/views.ts';
 import { ApiError, errors } from './errors.ts';
 import { apiAuth } from './auth.ts';
 import { orgGuard, projectGuard } from './guard.ts';
-import { registerProjectRoutes } from './routes/projects.ts';
+import { registerProjectRoutes, registerSharedProjectsRoute } from './routes/projects.ts';
 import { registerBranchRoutes } from './routes/branches.ts';
 import { registerEndpointRoutes } from './routes/endpoints.ts';
 import { registerApiKeyRoutes } from './routes/api-keys.ts';
@@ -83,6 +83,10 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   const api = new Hono<AppEnv>();
   api.use('*', apiAuth(deps.repos));
+
+  // Ahead of the scope guards below: they match `/projects/:project_id`, and "shared" is a literal,
+  // not a project id — the guard would 404 it before the route below could answer.
+  registerSharedProjectsRoute(api);
 
   // Scope guards run before any project/organization handler: a credential may only reach the
   // resources its key or session is entitled to see (design 004).

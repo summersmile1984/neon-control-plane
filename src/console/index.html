@@ -254,7 +254,9 @@
 
     <div class="card ops">
       <div class="head"><h2>操作流</h2><div class="grow"></div><span class="faint" id="opsNote" style="font-size:11.5px"></span></div>
-      <div class="body" id="operations"></div>
+      <!-- tabindex: the stream scrolls on its own once it outgrows the viewport, and a scrollable
+           region has to be reachable by keyboard (axe: scrollable-region-focusable). -->
+      <div class="body" id="operations" tabindex="0" aria-label="操作流"></div>
     </div>
   </div>
 </main>

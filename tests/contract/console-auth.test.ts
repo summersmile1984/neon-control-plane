@@ -51,6 +51,24 @@ beforeEach(() => {
 });
 
 describe('console authentication', () => {
+  it('serves the same single-page console at / and /console without a session', async () => {
+    const root = await app.request('/');
+    const console = await app.request('/console');
+    const rootHtml = await root.text();
+    const consoleHtml = await console.text();
+    for (const [path, response, html] of [
+      ['/', root, rootHtml],
+      ['/console', console, consoleHtml],
+    ] as const) {
+      expect(response.status, path).toBe(200);
+      expect(response.headers.get('content-type'), path).toMatch(/text\/html/);
+      expect(html, path).toContain('<main>');
+      expect(html, path).toContain('id="loginBtn"');
+    }
+    // Byte-identical: the root is an alias, not a second page that can drift.
+    expect(rootHtml).toBe(consoleHtml);
+  });
+
   it('advertises the enabled login methods', async () => {
     const body = (await (await app.request('/console/config')).json()) as Record<string, unknown>;
     expect(body).toMatchObject({ login_required: true, password_login: true, dev_login: true });

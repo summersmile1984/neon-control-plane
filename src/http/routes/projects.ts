@@ -10,6 +10,17 @@ import {
 } from './helpers.ts';
 import { principalOrgIds, resolveActingOrg } from '../guard.ts';
 
+/**
+ * `GET /projects/shared` is a literal path that sits next to `/projects/:project_id`. Registering it
+ * here does not help: the project guard matches `/projects/:project_id` first and 404s on the word
+ * "shared" before any handler here runs. The caller registers it ahead of that guard.
+ *
+ * A self-hosted plane shares nothing across accounts, but `neonctl projects list` calls this.
+ */
+export function registerSharedProjectsRoute(api: Hono<AppEnv>): void {
+  api.get('/projects/shared', (c) => respond(c, 'ProjectsResponse', { projects: [] }));
+}
+
 /** `/projects`, `/projects/{id}`, operations and `connection_uri` (002 §4.1). */
 export function registerProjectRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
   const { repos, service, config } = deps;
@@ -77,13 +88,10 @@ export function registerProjectRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
 
   // Must be registered before /projects/:project_id or the literal is captured as an id.
   // A self-hosted plane has no cross-account sharing, but neonctl calls this on `projects list`.
-  api.get('/projects/shared', (c) => respond(c, 'ProjectsResponse', { projects: [] }));
-
   api.get('/projects/:project_id', (c) => {
     const project = findProject(repos, c.req.param('project_id'));
     return respond(c, 'ProjectResponse', { project: projectView(project, context) });
   });
-
   api.patch('/projects/:project_id', async (c) => {
     const project = findProject(repos, c.req.param('project_id'));
     const body = await jsonBody(c);

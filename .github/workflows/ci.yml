@@ -173,3 +173,54 @@ jobs:
       - name: Stop the stack
         if: always()
         run: docker compose -f infra/compose/docker-compose.yml down -v
+
+  # The console is the only surface where login, sessions, OIDC and the project lifecycle are driven
+  # through a real browser. It also pulls its own control plane and a fake OIDC provider (playwright
+  # webServer), so it needs the storage layer up for the project case instead of skipping it.
+  browser:
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout immutable source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Configure Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.18.0
+      - name: Configure pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.16.1 --activate
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Start the Neon storage layer
+        run: |
+          docker compose -f infra/compose/docker-compose.yml up -d
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9898/v1/status; then exit 0; fi
+            sleep 3
+          done
+          echo "pageserver never became ready"
+          docker compose -f infra/compose/docker-compose.yml logs --tail=200
+          exit 1
+      - name: Pre-pull the compute image
+        run: docker pull docker.io/neondatabase/compute-node-v17:latest
+      - name: Install the browser Playwright drives
+        # The config falls back to the runner's Chrome; the bundled build is the reproducible choice.
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Generate the control plane master key
+        # The browser suite's webServer reads CP_MASTER_KEY from the job environment.
+        run: echo "CP_MASTER_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")" >> "$GITHUB_ENV"
+      - name: Run the console browser suite
+        env:
+          PW_CHANNEL: chromium
+        run: pnpm test:browser
+      - name: Show what the storage layer logged
+        if: failure()
+        run: docker compose -f infra/compose/docker-compose.yml logs --tail=200
+      - name: Stop the stack
+        if: always()
+        run: docker compose -f infra/compose/docker-compose.yml down -v

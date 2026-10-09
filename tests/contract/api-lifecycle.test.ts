@@ -146,6 +146,20 @@ describe('projects', () => {
     expect(fakes.state.timelines.size).toBe(1);
   });
 
+  it('answers /projects/shared with an empty list, as a single-tenant plane must', async () => {
+    // neonctl calls this while listing projects; a self-hosted plane shares nothing across accounts.
+    const created = await createProject();
+    await reconciler.drain();
+    const shared = await json(await app.request('/api/v2/projects/shared'));
+    expect(shared).toEqual({ projects: [] });
+    // It must not shadow /projects/:project_id, and the project itself is still listed normally.
+    const list = await json(await app.request('/api/v2/projects'));
+    expect((list.projects as Array<Record<string, unknown>>).map((row) => row.id)).toEqual([
+      (created.project as Record<string, unknown>).id,
+    ]);
+    expect((await app.request('/api/v2/projects/shared')).status).toBe(200);
+  });
+
   it('lists, reads, patches and deletes', async () => {
     const created = await createProject();
     const id = (created.project as Record<string, unknown>).id as string;
@@ -227,6 +241,29 @@ describe('branches', () => {
     });
     expect(tooOld.status).toBe(400);
     expect((await json(tooOld)).code).toBe('WRONG_LSN_OR_TIMESTAMP');
+  });
+
+  it('renames a branch and toggles its protected flag', async () => {
+    const created = await createProject();
+    const projectId = (created.project as Record<string, unknown>).id as string;
+    const branchId = (created.branch as Record<string, unknown>).id as string;
+
+    const patched = await app.request(`/api/v2/projects/${projectId}/branches/${branchId}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ branch: { name: 'production', protected: true } }),
+    });
+    expect(patched.status, await patched.clone().text()).toBe(200);
+    const body = await json(patched);
+    expect(body.branch).toMatchObject({ id: branchId, name: 'production', protected: true });
+    expect(body.operations).toEqual([]); // a rename touches no timeline and no compute
+
+    // The read path agrees, and the name is now taken.
+    const read = await json(await app.request(`/api/v2/projects/${projectId}/branches/${branchId}`));
+    expect((read.branch as Record<string, unknown>).name).toBe('production');
+    const clash = await app.request(`/api/v2/projects/${projectId}/branches`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ branch: { name: 'production' } }),
+    });
+    expect(clash.status).toBe(409);
   });
 
   it('refuses to delete the default branch and deletes a child', async () => {
@@ -327,6 +364,35 @@ describe('roles and databases', () => {
     expect((after.databases as unknown[]).length).toBe(1);
   });
 
+  it('reads one database and renames or reassigns it', async () => {
+    const created = await createProject();
+    const projectId = (created.project as Record<string, unknown>).id as string;
+    const branchId = (created.branch as Record<string, unknown>).id as string;
+    await app.request(`/api/v2/projects/${projectId}/branches/${branchId}/roles`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ role: { name: 'analyst' } }),
+    });
+    await app.request(`/api/v2/projects/${projectId}/branches/${branchId}/databases`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ database: { name: 'warehouse', owner_name: 'neondb_owner' } }),
+    });
+
+    const read = await json(await app.request(`/api/v2/projects/${projectId}/branches/${branchId}/databases/warehouse`));
+    expect(read.database).toMatchObject({ name: 'warehouse', owner_name: 'neondb_owner' });
+    expect((read.database as Record<string, unknown>).id).toBeTruthy();
+
+    const patched = await app.request(`/api/v2/projects/${projectId}/branches/${branchId}/databases/warehouse`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ database: { name: 'lakehouse', owner_name: 'analyst' } }),
+    });
+    expect(patched.status, await patched.clone().text()).toBe(200);
+    expect((await json(patched)).database).toMatchObject({ name: 'lakehouse', owner_name: 'analyst' });
+
+    // The new name is the address now; the old one is gone and both reads agree.
+    expect((await app.request(`/api/v2/projects/${projectId}/branches/${branchId}/databases/warehouse`)).status).toBe(404);
+    const renamed = await json(await app.request(`/api/v2/projects/${projectId}/branches/${branchId}/databases/lakehouse`));
+    expect(renamed.database).toMatchObject({ name: 'lakehouse', owner_name: 'analyst' });
+  });
+
   it('refuses reveal_password when the project does not store passwords', async () => {
     const created = await createProject({ project: { name: 'nostore', store_passwords: false } });
     const projectId = (created.project as Record<string, unknown>).id as string;
@@ -359,8 +425,49 @@ describe('endpoints', () => {
     endpoint = await json(await app.request(`/api/v2/projects/${projectId}/endpoints/${endpointId}`));
     expect((endpoint.endpoint as Record<string, unknown>).current_state).toBe('active');
 
+    // Restart is suspend-then-start queued together: the compute is terminated and started again.
+    const restarted = await app.request(`/api/v2/projects/${projectId}/endpoints/${endpointId}/restart`, { method: 'POST' });
+    expect(restarted.status, await restarted.clone().text()).toBe(200);
+    expect((await json(restarted)).operations).toHaveLength(2);
+    await reconciler.drain();
+    endpoint = await json(await app.request(`/api/v2/projects/${projectId}/endpoints/${endpointId}`));
+    expect((endpoint.endpoint as Record<string, unknown>).current_state).toBe('active');
+    expect(fakes.state.containers.get(endpointId)?.running).toBe(true);
+
     expect((await app.request(`/api/v2/projects/${projectId}/endpoints/${endpointId}`, { method: 'DELETE' })).status).toBe(200);
     expect((await app.request(`/api/v2/projects/${projectId}/endpoints/${endpointId}`)).status).toBe(404);
+  });
+
+  it('lists every endpoint of the project, not just one branch', async () => {
+    const created = await createProject();
+    const projectId = (created.project as Record<string, unknown>).id as string;
+    const branchId = (created.branch as Record<string, unknown>).id as string;
+
+    const child = await json(await app.request(`/api/v2/projects/${projectId}/branches`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ branch: { name: 'reader' } }),
+    }));
+    const childBranchId = (child.branch as Record<string, unknown>).id as string;
+    const second = await json(await app.request(`/api/v2/projects/${projectId}/endpoints`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint: { branch_id: childBranchId, type: 'read_only', name: 'replica' } }),
+    }));
+    const secondId = (second.endpoint as Record<string, unknown>).id as string;
+
+    const list = await json(await app.request(`/api/v2/projects/${projectId}/endpoints`));
+    const rows = list.endpoints as Array<Record<string, unknown>>;
+    expect(rows.map((row) => row.id).sort()).toEqual([
+      (created.endpoints as Array<Record<string, unknown>>)[0]!.id, secondId,
+    ].sort());
+    expect(rows.find((row) => row.id === secondId)).toMatchObject({ branch_id: childBranchId, type: 'read_only', name: 'replica' });
+    expect(rows.every((row) => row.project_id === projectId)).toBe(true);
+
+    // Deleting an endpoint takes it out of the collection without touching its branch's other endpoint.
+    expect((await app.request(`/api/v2/projects/${projectId}/endpoints/${secondId}`, { method: 'DELETE' })).status).toBe(200);
+    const after = await json(await app.request(`/api/v2/projects/${projectId}/endpoints`));
+    expect((after.endpoints as Array<Record<string, unknown>>).map((row) => row.id)).toEqual([
+      (created.endpoints as Array<Record<string, unknown>>)[0]!.id,
+    ]);
+    expect(branchId).toBeTruthy();
   });
 
   it('keeps the endpoint name the client sets, on create and on update', async () => {
