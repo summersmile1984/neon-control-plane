@@ -66,8 +66,13 @@ services:
       - "9898:9898" # HTTP API the control plane drives (/v1/tenant, /v1/tenant/*/timeline)
       - "6400:6400" # Postgres protocol: computes pull basebackup and pages from here
     volumes:
-      - ./pageserver_config:/data/.neon/
-      - pageserver_data:/data/tenants
+      # The whole data dir is a volume, and the two config files are mounted individually into it.
+      # Mounting the config *directory* instead put every tenant, timeline and pid file inside the
+      # checked-in tree, and nesting a volume under that bind gave the container a root-owned
+      # directory it could not write as uid 1000.
+      - pageserver_data:/data
+      - ./pageserver_config/pageserver.toml:/data/.neon/pageserver.toml:ro
+      - ./pageserver_config/identity.toml:/data/.neon/identity.toml:ro
     depends_on: [storage_broker, minio_create_buckets]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9898/v1/status"]

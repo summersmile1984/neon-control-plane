@@ -498,6 +498,7 @@ git tag v0.1.0 && git push origin v0.1.0
 - **项目/库建了但连不上**：确认对应 `start_compute` 操作已 `finished`；`direct` 档确认宿主机对应端口可用，`proxy` 档确认 proxy 容器与 `CP_PROXY_TOKEN` 一致。
 - **`/console/state` 返回 401**：页面是公开外壳，数据要登录或粘贴 key。
 - **容器里的客户端连 proxy**：用 `host.docker.internal` + `options=endpoint%3D<id>` 回退寻址（见上）。
+- **Linux 上 pageserver 报 `Permission denied` / `Fatal I/O error … create timelines/ dir`**：镜像以 uid 1000 的 `neon` 用户运行，只能写自己的卷。现在 pageserver 的 `/data` 是卷、两个 toml 只作为只读文件挂进去；如果把 `infra/compose/pageserver_config` 整个目录挂进 `/data/.neon`，Linux 上目录属主是当前用户，容器就写不进去（macOS 的 Docker Desktop 会掩盖这个差异）。
 - **状态漂移**：console 标红表示 SQLite 里 endpoint 是 `active` 但容器没了（多半被手工 `docker rm` 或 start 半路失败）。
 - **`host port NNNNN is published by container …`**：`start_compute` 不会去抢已被别的容器发布的端口（另一个控制面实例、或上次遗留的 compute）。Docker 会静默丢弃冲突的端口映射，于是 `await_ready` 一直在轮询别人的 compute 并收到 401。`docker rm -f` 掉报错里点名的容器，或改 `CP_PORT_RANGE`，操作重试就会自己恢复。
 
