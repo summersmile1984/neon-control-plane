@@ -107,7 +107,7 @@ jobs:
       # tenant isolation. Run them too rather than gate a release on half a suite.
       - name: Issue a wildcard certificate for the proxy
         run: |
-          node scripts/create-local-tls.mjs --output "$RUNNER_TEMP/proxy-certs" --zone db.siteops.localhost
+          node scripts/create-local-tls.mjs --output "$RUNNER_TEMP/proxy-certs" --zone db.neon.localhost
           # create-local-tls.mjs writes 0600 because these are local credentials. The proxy container
           # runs as uid 1000 while the runner owns them, so widen to "any user can read, nobody can
           # write" or the proxy exits before it binds.

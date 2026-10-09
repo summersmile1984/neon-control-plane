@@ -79,7 +79,7 @@ describe('vendored spec covers the implementation subset', () => {
     expect(errorCode?.enum).toBeUndefined();
   });
 
-  it('keeps the required Role and Database fields the SiteOps mappers read', () => {
+  it('keeps the required Role and Database fields client mappers read', () => {
     expect(spec.components.schemas.Role?.required).toEqual(expect.arrayContaining(['branch_id', 'name', 'created_at', 'updated_at']));
     expect(spec.components.schemas.Database?.required).toEqual(expect.arrayContaining(['id', 'branch_id', 'name', 'owner_name']));
     expect(spec.components.schemas.Branch?.required).toEqual(expect.arrayContaining(['id', 'project_id', 'name', 'current_state', 'default', 'protected']));

@@ -4,7 +4,7 @@
 
 > **非 Neon 官方项目。** Neon 源码为 Apache-2.0，"Neon" 是其商标。本项目只用于本地开发环境，不面向生产自托管。
 
-本项目是独立的 Git 克隆（Apache-2.0），与 Site Growth 单仓平级存放；以下 `pnpm` 和 Compose 命令均从仓库根目录执行，保留本仓库独立锁文件。SiteOps 侧的接线（Caddy、provider、workerd 探针）属于 [Site Growth 单仓](https://github.com/summersmile1984/siteops-monorepo)，不在本仓库范围内。不要把 `compose:down` 当作安全停机命令——它会删除卷。
+本仓库自成一体：独立 clone、独立锁文件，所有 `pnpm` 与 Compose 命令都从仓库根目录执行，不依赖任何同级目录或外部仓库。不要把 `compose:down` 当作安全停机命令——它会删除卷。
 
 ---
 
@@ -19,6 +19,7 @@
 - [鉴权与 API key](#鉴权与-api-key)
 - [已实现的 API](#已实现的-api)
 - [连接路由三档](#连接路由三档)
+- [SQL over HTTPS / WebSocket 入口](#sql-over-https--websocket-入口)
 - [本地运维 console](#本地运维-console)
 - [配置项（环境变量）](#配置项环境变量)
 - [测试](#测试)
@@ -33,9 +34,11 @@
 
 ## 为什么存在
 
-Neon 云端控制面 `console.neon.tech/api/v2` **没有开源实现**（2026-09-07 核实：NeonD 只有 Web 面板、neon-operator 只有 Kubernetes CRD、Neon Local 需要云端 API key）。而 [SiteOps](https://github.com/summersmile1984/siteops-monorepo) 的 `provider-neon` / `neon-provider-service` 依赖这套 API 完成本地联调。
+Neon 开源了数据面的全部组件——pageserver、safekeeper、storage_broker、compute-node、proxy——并发布 arm64/amd64 镜像，**但没有开源控制面**：`console.neon.tech/api/v2` 这套管理 API 至今没有公开实现（2026-09-07 核实：NeonD 只有 Web 面板，neon-operator 只有 Kubernetes CRD，Neon Local 仍需云端 API key）。
 
-于是本项目自建一个兼容 `api/v2` 的控制面，后端接 Neon 的开源数据面组件，让**未修改的 SiteOps 客户端**、`neonctl` 等消费者能在本地跑通整条链路。
+这就是缺口所在：数据面能自己跑，但没有任何东西告诉你「建项目、建分支、起 compute、发角色和连接串、轮询操作」该怎么调。于是本项目补上这一层——一个兼容 `api/v2` 的控制面，后端直接驱动 Neon 的开源组件。
+
+结果是：任何按官方文档写客户端的人，`neonctl`、`@neon/sdk`、`neon-api-python` 或自己手写的 HTTP 调用，只要把 base URL 指过来就能用，不必连云端。
 
 ## 它是什么 / 不是什么
 
@@ -63,7 +66,7 @@ Neon 云端控制面 `console.neon.tech/api/v2` **没有开源实现**（2026-09
 | **M4** | 多 safekeeper / storage_controller / K8s | **不做**（不解决本地开发问题） |
 | **M5** | API key 管理、鉴权、身份面、控制台登录 | 完成 |
 
-M0–M3 用真东西证过（非 mock）：未经修改的 SiteOps `provider-neon` 客户端跑通全链路；官方 Neon proxy 在前做 TLS + SNI + SCRAM + 按需唤醒；Directus 用本控制面发的连接串跑完所有引导迁移。
+M0–M3 用真东西证过（非 mock）：官方 `neonctl` 与 `@neon/sdk` 能对着它建项目、建分支、取连接串；官方 Neon proxy 在前做 TLS + SNI + SCRAM + 按需唤醒；`psql` 直连 compute 跑通 DDL/DML；Directus 用本控制面发的连接串跑完所有引导迁移。
 
 `pg_sni_router` 实测后放弃：它在 Neon 连接串的单标签主机名上直接 panic，且不做鉴权、不能唤醒挂起的 compute（见 [003](docs/design/003_任务分解与验收清单.md) T-201）。proxy 覆盖其全部用途。
 
@@ -71,8 +74,8 @@ M0–M3 用真东西证过（非 mock）：未经修改的 SiteOps `provider-neo
 
 ```
                      ┌──────────────────────────────────────────┐
-   neonctl /         │            neon-control-plane             │
-   provider-neon ───►│  Hono  /api/v2  +  /console  +  /cplane   │
+   neonctl / SDK /   │            neon-control-plane             │
+  任何 api/v2 客户端 ─►│  Hono  /api/v2  +  /console  +  /cplane   │
    (Bearer key)      │  SQLite 控制状态 + operations/reconciler  │
                      └───────┬───────────────┬──────────────┬────┘
                              │ HTTP          │ Docker API   │ HTTP / JWT
@@ -133,7 +136,7 @@ pnpm compose:up     # pageserver + safekeeper + storage_broker + 对象存储（
 pnpm dev            # 控制面监听 :8080
 ```
 
-对象存储用 **rustfs**（MinIO 的镜像已全部下架：Docker Hub 上每个 tag 都 404，quay.io 匿名拉取返回 401，只有还缓存着旧镜像的机器能跑）。服务名仍叫 `minio`，宿主机 API/控制台端口默认 `19000`/`19001`，可用 `NEON_MINIO_API_PORT`/`NEON_MINIO_CONSOLE_PORT` 覆盖，容器网络仍是 `minio:9000`，因此可与 `siteops-platform` 本地栈的宿主机 `9000`/`9001` 并行运行；换别的 S3 实现用 `NEON_S3_IMAGE`。`compose:down` 会删除卷，不能用于无损停机或冒烟测试。
+对象存储用 **rustfs**（MinIO 的镜像已全部下架：Docker Hub 上每个 tag 都 404，quay.io 匿名拉取返回 401，只有还缓存着旧镜像的机器能跑）。服务名仍叫 `minio`，宿主机 API/控制台端口默认 `19000`/`19001`，可用 `NEON_MINIO_API_PORT`/`NEON_MINIO_CONSOLE_PORT` 覆盖，容器网络仍是 `minio:9000`，因此不会和本机已有的 9000/9001 打架；换别的 S3 实现用 `NEON_S3_IMAGE`。`compose:down` 会删除卷，不能用于无损停机或冒烟测试。
 
 首启会从 env 播种一个 owner、一个组织。设 `CP_BOOTSTRAP_API_KEY` 可以在启动时直接得到第一把 key：
 
@@ -184,7 +187,7 @@ token 前缀默认 `napi_`（`CP_KEY_PREFIX` 可改），只在**创建时回显
 
 | env | 作用 |
 |---|---|
-| `CP_ORG_ID` / `CP_ORG_NAME` | 组织 id/名称。默认 `org-super-glade-55833945`，与 SiteOps 的 `NEON_ORGANIZATION_ID` 对齐 |
+| `CP_ORG_ID` / `CP_ORG_NAME` | 组织 id/名称。默认 `org-super-glade-55833945`；客户端用 `?org_id=` 指定组织时，两者必须一致 |
 | `CP_OWNER_ID` / `CP_OWNER_EMAIL` / `CP_OWNER_NAME` / `CP_OWNER_LAST_NAME` | owner 用户。邮箱必须是合法格式（含域名） |
 | `CP_OWNER_PASSWORD` | 可选的本地密码登录口令；不设则密码登录关闭 |
 | `CP_BOOTSTRAP_API_KEY` | 可选的 owner 首把个人 key（明文，仅在启动时使用） |
@@ -235,7 +238,7 @@ token 前缀默认 `napi_`（`CP_KEY_PREFIX` 可改），只在**创建时回显
 | `proxy` | `postgresql://role:pw@<ep>.<zone>/db?sslmode=require&channel_binding=require` | 本地开发主用；前面是官方 Neon proxy（TLS + SNI + SCRAM + 按需唤醒） |
 | `sni-router` | `postgresql://role:pw@<ep>--compute--55433.<zone>:5432/db?...` | 仅供 K8s；本地不提供路由器 |
 
-后两档 URI 省略端口并带 `sslmode=require&channel_binding=require`，这是 SiteOps 客户端解析所要求的形状。
+后两档 URI 省略端口并带 `sslmode=require&channel_binding=require`，与 Neon 云端下发的连接串形状一致。
 
 **容器内的客户端**（如 Directus）看到的 proxy 是 `host.docker.internal`，端点 id 无法塞进该主机名，用 Neon 的启动包回退参数即可（不依赖 DNS）：
 
@@ -243,23 +246,21 @@ token 前缀默认 `napi_`（`CP_KEY_PREFIX` 可改），只在**创建时回显
 postgresql://<role>:<pw>@host.docker.internal:5434/<db>?sslmode=no-verify&options=endpoint%3D<endpoint_id>
 ```
 
-## SiteOps workerd 的 SQL HTTP / WebSocket 入口
+## SQL over HTTPS / WebSocket 入口
 
 proxy 的 `--http` 是监控/健康端口；SQL `/sql` 和 WebSocket `/v2` 由 `--wss` 提供。compose 已明确拆开：7001 发布 SQL HTTPS/WSS，7002 仅在容器内提供监控。不要把 7001 返回一个健康页当作 SQL 可用。
 
 生成独立的开发 CA 和服务证书（不会安装系统信任，也不会覆盖已有目录）：
 
 ```sh
-node scripts/create-local-tls.mjs --output data/neon-tls --zone db.siteops.localhost
+node scripts/create-local-tls.mjs --output data/neon-tls --zone db.neon.localhost
 ```
 
-在 compose 环境中设置 `PROXY_CERT_DIR` 为该目录的绝对路径。proxy 读取 `wildcard.crt` / `wildcard.key`；Node/Miniflare 启动前将 `NODE_EXTRA_CA_CERTS` 指向 **ca.crt**。SiteOps T03 实测，自签名且 CA:FALSE 的叶证书虽然能在 Node 查询，但 workerd 请求失败；换成 CA 签发链后 HTTP/WSS 均通过。不要关闭 TLS 校验或将 leaf 当 CA 使用。证书有效期 30 天，更新时生成新目录并有序切换；不要把私钥提交到仓库。
+在 compose 环境中设置 `PROXY_CERT_DIR` 为该目录的绝对路径。proxy 读取 `wildcard.crt` / `wildcard.key`；客户端启动前把 `NODE_EXTRA_CA_CERTS` 指向 **ca.crt**。实测（workerd 运行时）：自签名且 CA:FALSE 的叶证书在 Node 侧能连上，workerd 请求会失败；换成 CA 签发链后 HTTP/WSS 均通过。不要关闭 TLS 校验或把 leaf 当 CA 使用。证书有效期 30 天，更新时生成新目录并有序切换；不要把私钥提交到仓库。
 
 管理 API 创建的角色具有 Neon 管理权限；应用/站点角色须经 owner SQL 创建 `LOGIN NOINHERIT` 的受限角色。proxy 现在通过带签名的 compute_ctl `/dbs_and_roles` 读取实际 SCRAM verifier，因此支持这些 SQL 角色的连接及密码变更；不会将它们写回 managed roles/spec 并在重启时提升权限。私有 `/cplane/*` 必须配置 `CP_PROXY_TOKEN`，缺失配置直接拒绝。数据库的 NOLOGIN/权限约束仍由 Postgres 最终执行。
 
 不同管理实例必须使用不同的 `CP_INSTANCE_ID`、SQLite 路径、compute 目录和端口区间。启动回收只触及本实例标签下、当前账本不存在的 compute；未设置 instance id 时不执行孤儿回收。旧的无实例标签容器不会自动迁入或删除。更换 DB 文件时不能复用旧实例 ID，否则旧资源会被视为该实例的孤儿。
-
-可重复验证入口在相邻 SiteOps 平台仓库的 `pnpm preflight:local-neon`，包含管理 API 建临时项目、SQL 站点角色、实际 workerd HTTP/WSS 访问及项目删除读回；其报告不代表完整产品建站通过。
 
 ## 本地运维 console
 
@@ -274,7 +275,7 @@ node scripts/create-local-tls.mjs --output data/neon-tls --zone db.siteops.local
 - **API keys 面板**：个人与组织 key 的列表 / 创建（明文只显示一次）/ 撤销；
 - **组织成员面板**。
 
-页面上的每个数据动作（建项目、start/suspend/restart、删项目、取连接串、建/撤 key）都打真正的 `/api/v2` 路由，所以 console 与 `provider-neon`、`neonctl` 走完全相同的合同。它挂在 `/api/v2` 之外，不属于 Neon 合同，**不要让任何客户端依赖它**。
+页面上的每个数据动作（建项目、start/suspend/restart、删项目、取连接串、建/撤 key）都打真正的 `/api/v2` 路由，所以 console 与任何 `neonctl` / SDK 客户端走完全相同的合同。它挂在 `/api/v2` 之外，不属于 Neon 合同，**不要让任何客户端依赖它**。
 
 快照里**没有口令**：只回"是否存了口令"，口令仍只能经 `reveal_password` 对单个角色显式索取。页面是单文件、无构建、无 CDN，断网可用。
 
@@ -314,7 +315,7 @@ node scripts/create-local-tls.mjs --output data/neon-tls --zone db.siteops.local
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `CP_ROUTE_MODE` | `direct` | `direct` / `sni-router` / `proxy` |
-| `CP_ZONE` | `db.siteops.localhost` | 端点主机后缀 |
+| `CP_ZONE` | `db.neon.localhost` | 端点主机后缀 |
 | `CP_PROXY_TOKEN` | 空 | 官方 proxy 访问 `/cplane/*` 时携带的 bearer |
 
 ### 身份与 API key（M5）
@@ -377,12 +378,9 @@ CP_API_KEY=napi_local_e2e_key CP_ROUTE_MODE=proxy CP_PROXY_PORT=5434 pnpm test:e
 | `data-plane` | **数据面最终效果**：项目在 pageserver 里真有 tenant + timeline；库/角色存在；DDL（create table/index/alter）与 DML（insert/update/delete/select、事务回滚）真实执行并读回；连接串凭据真能登录 |
 | `proxy-connect` | psql 经官方 proxy 连上（SNI 与启动包两种寻址）；错口令被拒；挂起后冷启动唤醒并保留数据 |
 | `tenant-isolation` | 两租户各自 tenant/timeline/compute/role/db；拿 A 凭据连 B endpoint 被拒；删 A 后 B 完好 |
-| `siteops-provider` | 真实 SiteOps `provider-neon` 客户端经 HTTPS 跑完 provider 调用 |
 | `directus-on-control-plane` | Directus 迁移落在控制面起的 compute；挂起后下一请求恢复 |
 
-前置条件缺失时用例**报跳过而不是失败**（`context.skip(reason)`）：没起控制面、`CP_API_KEY` 未设或 401、没起 proxy、`psql` 不在 PATH、没有 SiteOps Caddy、没有 `siteops-directus-container` 镜像。
-
-`siteops-provider` 还需要一份 SiteOps 检出。默认在同级目录找 `site-growth/siteops-platform`；放在别处时用 `SITEOPS_PLATFORM_DIR` 指定它的绝对路径。
+前置条件缺失时用例**报跳过而不是失败**（`context.skip(reason)`）：没起控制面、`CP_API_KEY` 未设或 401、没起 proxy、`psql` 不在 PATH、本地没有 Directus 测试镜像（`DIRECTUS_IMAGE` 指定）。
 
 ### 浏览器（console E2E）
 
@@ -493,7 +491,7 @@ git tag v0.1.0 && git push origin v0.1.0
 
 - **`.env` 含空格的值必须加引号**：`CP_PAGESERVER_CONNSTRING="host=pageserver port=6400"`。否则会被 shell 截断，compute 卡在 `init`（配置加载会拒绝这种值）。
 - **401 全是意料之中**：控制面始终要求鉴权。确认请求带了 `Authorization: Bearer napi_...`，且 key 未撤销。本地 e2e 需把控制面的 `CP_BOOTSTRAP_API_KEY` 与测试的 `CP_API_KEY` 设成同一个值。
-- **组织不匹配 → 404/403**：消费者 `provider-neon` 会在项目请求上带 `?org_id=`。让 `CP_ORG_ID` 与 SiteOps 的 `NEON_ORGANIZATION_ID` 一致（默认已对齐）。
+- **组织不匹配 → 404/403**：客户端会在项目请求上带 `?org_id=`。让它和控制面的 `CP_ORG_ID` 一致。
 - **proxy 模式连不上**：宿主 5432 常被本机 PostgreSQL 占用，用 `PROXY_PORT=5434` 起 proxy 并设 `CP_PROXY_PORT=5434`。
 - **项目/库建了但连不上**：确认对应 `start_compute` 操作已 `finished`；`direct` 档确认宿主机对应端口可用，`proxy` 档确认 proxy 容器与 `CP_PROXY_TOKEN` 一致。
 - **`/console/state` 返回 401**：页面是公开外壳，数据要登录或粘贴 key。

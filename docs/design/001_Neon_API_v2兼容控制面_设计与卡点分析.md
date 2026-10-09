@@ -1,10 +1,12 @@
 # 001 Neon API v2 兼容控制面：设计与卡点分析
 
+> **历史文档**：本文是 2026-09-07 的设计记录，按当时的第一消费方（另一个平台项目）写的，保留原文不改写。仓库现在是独立的 `neon-control-plane`：目的只有一个——补上 Neon 开源数据面缺失的管理 API。当前形态以 README 为准。
+>
 > **文档版本**：v1.0  
 > **日期**：2026-09-07  
-> **仓库**：`neon-control-plane`（暂名；独立于 siteops-platform）  
-> **一句话**：用一个自研控制面实现 Neon 云端管理 API（`console.neon.tech/api/v2`）的子集，后端接 Neon 开源自部署组件（pageserver / safekeeper / storage_broker / compute-node / proxy），让 SiteOps 的 `neon-provider-service` 不改一行代码就能对着本机跑。  
-> **事实来源标注**：`[F]` 官方仓库/文档/镜像上查到的事实（来源见文末）；`[C]` SiteOps 当前代码事实；`[D]` 本文决定；`[?]` 尚需在 M0 实测核对。
+> **仓库**：`neon-control-plane`  
+> **一句话**：用一个自研控制面实现 Neon 云端管理 API（`console.neon.tech/api/v2`）的子集，后端接 Neon 开源自部署组件（pageserver / safekeeper / storage_broker / compute-node / proxy）。  
+> **事实来源标注**：`[F]` 官方仓库/文档/镜像上查到的事实（来源见文末）；`[C]` 当时消费方的代码事实；`[D]` 本文决定；`[?]` 尚需在 M0 实测核对。
 
 ## 0. 结论先行
 

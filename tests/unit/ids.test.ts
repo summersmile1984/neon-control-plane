@@ -5,37 +5,37 @@ import {
 } from '../../src/domain/ids.ts';
 
 /**
- * These patterns are the SiteOps provider's own validators (002 §4, packages/provider-neon):
+ * These patterns are what client libraries validate against (002 §4):
  * an id that fails them is silently dropped by the consumer, so they are part of the contract.
  */
-const SITEOPS_PROJECT = /^[a-z0-9-]{1,60}$/;
-const SITEOPS_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const SITEOPS_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+const CONSUMER_PROJECT = /^[a-z0-9-]{1,60}$/;
+const CONSUMER_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const CONSUMER_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 
 describe('identifier generation', () => {
-  it('project ids match the SiteOps project pattern', () => {
+  it('project ids match the project pattern', () => {
     for (let attempt = 0; attempt < 200; attempt += 1) {
       const id = generateProjectId();
-      expect(id, id).toMatch(SITEOPS_PROJECT);
+      expect(id, id).toMatch(CONSUMER_PROJECT);
       expect(isProjectId(id)).toBe(true);
       expect(id.split('-')).toHaveLength(3);
     }
   });
 
-  it('branch ids are br-prefixed and match the SiteOps branch pattern', () => {
+  it('branch ids are br-prefixed and match the branch pattern', () => {
     for (let attempt = 0; attempt < 200; attempt += 1) {
       const id = generateBranchId();
       expect(id, id).toMatch(/^br-/);
-      expect(id, id).toMatch(SITEOPS_BRANCH);
+      expect(id, id).toMatch(CONSUMER_BRANCH);
       expect(isBranchId(id)).toBe(true);
     }
   });
 
-  it('endpoint ids are ep-prefixed and match the SiteOps identifier pattern', () => {
+  it('endpoint ids are ep-prefixed and match the endpoint identifier pattern', () => {
     for (let attempt = 0; attempt < 200; attempt += 1) {
       const id = generateEndpointId();
       expect(id, id).toMatch(/^ep-/);
-      expect(id, id).toMatch(SITEOPS_IDENTIFIER);
+      expect(id, id).toMatch(CONSUMER_IDENTIFIER);
       expect(isEndpointId(id)).toBe(true);
     }
   });

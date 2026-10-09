@@ -13,7 +13,7 @@ import { connect } from 'node:net';
 
 export const BASE = process.env.CP_BASE_URL ?? 'http://127.0.0.1:8080';
 export const PROXY_PORT = Number(process.env.CP_PROXY_PORT ?? 5434);
-export const ZONE = process.env.CP_ZONE ?? 'db.siteops.localhost';
+export const ZONE = process.env.CP_ZONE ?? 'db.neon.localhost';
 export const ORG_ID = process.env.CP_ORG_ID;
 
 const API_KEY = process.env.CP_API_KEY;

@@ -155,7 +155,7 @@ export function loadConfig(env: Env = process.env): Config {
     computeVolumeRoot: optional(env, 'CP_COMPUTE_VOLUME_ROOT', './data/computes'),
     portRange: portRange(optional(env, 'CP_PORT_RANGE', '55500-55700')),
     routeMode: routeMode(optional(env, 'CP_ROUTE_MODE', 'direct')),
-    zone: optional(env, 'CP_ZONE', 'db.siteops.localhost'),
+    zone: optional(env, 'CP_ZONE', 'db.neon.localhost'),
     proxyToken: env.CP_PROXY_TOKEN?.trim() || undefined,
     validateResponses: optional(env, 'CP_VALIDATE_RESPONSES', '1') === '1',
     identity: loadIdentity(env),

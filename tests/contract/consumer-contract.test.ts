@@ -17,11 +17,10 @@ import { fakeAdapters } from '../support/fakes.ts';
 import { authed, bootstrapForTest, testIdentity } from '../support/identity.ts';
 
 /**
- * T-109 / 002 §12.2 item 2: the rules `siteops-platform/packages/provider-neon` applies to every
- * response. Its mappers silently drop anything that fails these, so a violation here is a silent
- * outage on the consumer side rather than a visible error.
+ * A strict client never sees the official schema — it sees its own mappers. Anything that fails
+ * their checks is dropped silently, so a violation here is a silent outage on the consumer side
+ * rather than a visible error. These are the shapes every Neon client library agrees on:
  *
- * Patterns copied verbatim from that package:
  *   project    /^[a-z0-9-]{1,60}$/
  *   branch     /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
  *   identifier /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/
@@ -47,7 +46,7 @@ beforeEach(() => {
     safekeepers: ['safekeeper1:5454'], neonTag: 'test', computeImageRepo: 'docker.io/neondatabase',
     dockerSocket: '/var/run/docker.sock', dockerNetwork: 'neon-cp-test',
     computeVolumeRoot: join(workdir, 'computes'), portRange: [55500, 55520],
-    routeMode: 'proxy', zone: 'db.siteops.localhost', proxyToken: undefined, validateResponses: true,
+    routeMode: 'proxy', zone: 'db.neon.localhost', proxyToken: undefined, validateResponses: true,
     identity: testIdentity(),
   };
   const repos = createRepositories(openDatabase(':memory:'));
@@ -76,9 +75,9 @@ async function get(path: string): Promise<Record<string, unknown>> {
   return (await response.json()) as Record<string, unknown>;
 }
 
-describe('SiteOps provider-neon consumer contract', () => {
+describe('generic Neon client consumer contract', () => {
   it('every identifier matches the pattern the consumer validates', async () => {
-    const created = await post('/api/v2/projects', { project: { name: 'siteops', pg_version: 17 } });
+    const created = await post('/api/v2/projects', { project: { name: 'demo', pg_version: 17 } });
     const project = created.project as Record<string, unknown>;
     const branch = created.branch as Record<string, unknown>;
     const endpoint = (created.endpoints as Array<Record<string, unknown>>)[0]!;
@@ -94,12 +93,12 @@ describe('SiteOps provider-neon consumer contract', () => {
   });
 
   it('branch responses carry the fields branchFrom() reads', async () => {
-    const created = await post('/api/v2/projects', { project: { name: 'siteops' } });
+    const created = await post('/api/v2/projects', { project: { name: 'demo' } });
     const projectId = (created.project as Record<string, unknown>).id as string;
 
     const branchBody = await post(`/api/v2/projects/${projectId}/branches`, {
       branch: { name: 'consumer' },
-      annotation_value: { siteops_logical_resource_id: 'lr_42', siteops_workspace_id: 'ws_42' },
+      annotation_value: { logical_resource_id: 'lr_42', workspace_id: 'ws_42' },
     });
     const branch = branchBody.branch as Record<string, unknown>;
 
@@ -110,11 +109,11 @@ describe('SiteOps provider-neon consumer contract', () => {
     expect(branch.updated_at).toBeTypeOf('string');
     expect(branch.parent_id).toBeTypeOf('string');
     // The consumer reconciles its own resources off this echo; dropping it breaks that silently.
-    expect(branch.annotation_value).toEqual({ siteops_logical_resource_id: 'lr_42', siteops_workspace_id: 'ws_42' });
+    expect(branch.annotation_value).toEqual({ logical_resource_id: 'lr_42', workspace_id: 'ws_42' });
   });
 
   it('endpoint responses carry branch_id, type, host and current_state', async () => {
-    const created = await post('/api/v2/projects', { project: { name: 'siteops' } });
+    const created = await post('/api/v2/projects', { project: { name: 'demo' } });
     const projectId = (created.project as Record<string, unknown>).id as string;
     const branchId = (created.branch as Record<string, unknown>).id as string;
 
@@ -128,11 +127,11 @@ describe('SiteOps provider-neon consumer contract', () => {
   });
 
   it('role responses carry branch_id, protected and authentication_method, with a password only on write', async () => {
-    const created = await post('/api/v2/projects', { project: { name: 'siteops' } });
+    const created = await post('/api/v2/projects', { project: { name: 'demo' } });
     const projectId = (created.project as Record<string, unknown>).id as string;
     const branchId = (created.branch as Record<string, unknown>).id as string;
 
-    const createdRole = (await post(`/api/v2/projects/${projectId}/branches/${branchId}/roles`, { role: { name: 'siteops_role' } })).role as Record<string, unknown>;
+    const createdRole = (await post(`/api/v2/projects/${projectId}/branches/${branchId}/roles`, { role: { name: 'app_role' } })).role as Record<string, unknown>;
     // roleFrom() requires branch_id to equal the branch it queried.
     expect(createdRole.branch_id).toBe(branchId);
     expect(createdRole.protected).toBe(false);
@@ -141,20 +140,20 @@ describe('SiteOps provider-neon consumer contract', () => {
     expect(password.length).toBeGreaterThanOrEqual(1);
     expect(password.length).toBeLessThanOrEqual(4096);
 
-    const read = (await get(`/api/v2/projects/${projectId}/branches/${branchId}/roles/siteops_role`)).role as Record<string, unknown>;
+    const read = (await get(`/api/v2/projects/${projectId}/branches/${branchId}/roles/app_role`)).role as Record<string, unknown>;
     expect(read.password, 'GET must not leak the password').toBeUndefined();
 
-    const revealed = await get(`/api/v2/projects/${projectId}/branches/${branchId}/roles/siteops_role/reveal_password`);
+    const revealed = await get(`/api/v2/projects/${projectId}/branches/${branchId}/roles/app_role/reveal_password`);
     expect(revealed.password).toBe(password);
   });
 
   it('database responses carry id, name and owner_name', async () => {
-    const created = await post('/api/v2/projects', { project: { name: 'siteops' } });
+    const created = await post('/api/v2/projects', { project: { name: 'demo' } });
     const projectId = (created.project as Record<string, unknown>).id as string;
     const branchId = (created.branch as Record<string, unknown>).id as string;
 
     const body = await post(`/api/v2/projects/${projectId}/branches/${branchId}/databases`, {
-      database: { name: 'siteops_db', owner_name: 'neondb_owner' },
+      database: { name: 'app_db', owner_name: 'neondb_owner' },
     });
     const database = body.database as Record<string, unknown>;
     // databaseFrom() takes id when present, else name; both must be usable as a resource ref.
@@ -164,7 +163,7 @@ describe('SiteOps provider-neon consumer contract', () => {
   });
 
   it('operations use the spec status vocabulary and reach finished', async () => {
-    const created = await post('/api/v2/projects', { project: { name: 'siteops' } });
+    const created = await post('/api/v2/projects', { project: { name: 'demo' } });
     const projectId = (created.project as Record<string, unknown>).id as string;
     const allowed = ['scheduling', 'running', 'finished', 'failed', 'error', 'cancelling', 'cancelled', 'skipped'];
     for (const operation of created.operations as Array<Record<string, unknown>>) {
@@ -181,7 +180,7 @@ describe('SiteOps provider-neon consumer contract', () => {
   it('the seven provider operations map onto working endpoints', async () => {
     // database.create / preview / observe / health / delete and site_role.converge / delete all
     // reduce to this sequence of calls.
-    const created = await post('/api/v2/projects', { project: { name: 'siteops' } });
+    const created = await post('/api/v2/projects', { project: { name: 'demo' } });
     const projectId = (created.project as Record<string, unknown>).id as string;
     const branchId = (created.branch as Record<string, unknown>).id as string;
     await drain();
@@ -189,7 +188,7 @@ describe('SiteOps provider-neon consumer contract', () => {
     // database.create -> branch + database
     const preview = await post(`/api/v2/projects/${projectId}/branches`, {
       branch: { name: 'preview' }, endpoints: [{ type: 'read_write' }],
-      annotation_value: { siteops_logical_resource_id: 'lr_preview', siteops_workspace_id: 'ws_1' },
+      annotation_value: { logical_resource_id: 'lr_preview', workspace_id: 'ws_1' },
     });
     const previewBranch = (preview.branch as Record<string, unknown>).id as string;
     await drain();

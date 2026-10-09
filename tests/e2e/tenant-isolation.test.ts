@@ -7,7 +7,7 @@ import {
 /**
  * T-306 / SaaS-011.5: two workspaces on one local stack must not be able to reach each other.
  *
- * SiteOps maps one workspace to one Neon project, so this is the isolation the platform's
+ * One consumer maps one workspace to one Neon project, so this is the isolation that
  * multi-tenancy rests on. The layers under test, from the bottom up:
  *
  *   storage   one pageserver tenant per project, one timeline per branch

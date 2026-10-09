@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildConnectionUri, connectionParameters, endpointHost } from '../../src/domain/connection-uri.ts';
 
 const endpoint = { id: 'ep-quiet-river-a1b2c3d4', pgPort: 55501 };
-const base = { zone: 'db.siteops.localhost', endpoint, database: 'neondb', role: 'neondb_owner', password: 'pw-123' } as const;
+const base = { zone: 'db.neon.localhost', endpoint, database: 'neondb', role: 'neondb_owner', password: 'pw-123' } as const;
 
 describe('connection URI assembly', () => {
   it('direct mode points at the published host port without TLS', () => {
@@ -12,16 +12,16 @@ describe('connection URI assembly', () => {
 
   it('sni-router mode encodes service--namespace--port in the first label', () => {
     expect(buildConnectionUri({ ...base, mode: 'sni-router' }))
-      .toBe('postgresql://neondb_owner:pw-123@ep-quiet-river-a1b2c3d4--compute--55433.db.siteops.localhost/neondb?sslmode=require&channel_binding=require');
+      .toBe('postgresql://neondb_owner:pw-123@ep-quiet-river-a1b2c3d4--compute--55433.db.neon.localhost/neondb?sslmode=require&channel_binding=require');
   });
 
   it('proxy mode uses the bare endpoint id as the first label, like Neon cloud', () => {
     expect(buildConnectionUri({ ...base, mode: 'proxy' }))
-      .toBe('postgresql://neondb_owner:pw-123@ep-quiet-river-a1b2c3d4.db.siteops.localhost/neondb?sslmode=require&channel_binding=require');
+      .toBe('postgresql://neondb_owner:pw-123@ep-quiet-river-a1b2c3d4.db.neon.localhost/neondb?sslmode=require&channel_binding=require');
   });
 
   it('pooled hosts get the -pooler suffix on the routed modes', () => {
-    expect(endpointHost('proxy', base.zone, endpoint.id, true)).toBe('ep-quiet-river-a1b2c3d4-pooler.db.siteops.localhost');
+    expect(endpointHost('proxy', base.zone, endpoint.id, true)).toBe('ep-quiet-river-a1b2c3d4-pooler.db.neon.localhost');
     expect(endpointHost('direct', base.zone, endpoint.id, true)).toBe('127.0.0.1');
   });
 
@@ -35,7 +35,7 @@ describe('connection URI assembly', () => {
 
   it('exposes the same values as structured parameters', () => {
     expect(connectionParameters({ ...base, mode: 'proxy' })).toEqual({
-      host: 'ep-quiet-river-a1b2c3d4.db.siteops.localhost',
+      host: 'ep-quiet-river-a1b2c3d4.db.neon.localhost',
       port: 5432,
       database: 'neondb',
       role: 'neondb_owner',
@@ -44,7 +44,7 @@ describe('connection URI assembly', () => {
     });
   });
 
-  it('produces a host that satisfies the SiteOps endpoint.host validator', () => {
+  it('produces a host that satisfies the client endpoint.host validator', () => {
     for (const mode of ['direct', 'sni-router', 'proxy'] as const) {
       expect(endpointHost(mode, base.zone, endpoint.id)).toMatch(/^[A-Za-z0-9.-]{1,253}$/);
     }

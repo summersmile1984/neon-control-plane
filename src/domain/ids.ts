@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
 /**
- * Public IDs must satisfy the shapes the SiteOps provider validates (002 §4, [C]):
+ * Public IDs must satisfy the shapes every Neon client validates (002 §4):
  *   project  /^[a-z0-9-]{1,60}$/
  *   branch   /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
  *   endpoint /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/

@@ -115,7 +115,7 @@ services:
 
   # T-201 (pg_sni_router) is deliberately absent. Measured on build 8464, it cannot serve a Neon
   # connection string: it splits the SNI first label on `--` and indexes three parts, so the
-  # single-label host `ep-xxx.db.siteops.localhost` panics the session handler
+  # single-label host `ep-xxx.db.neon.localhost` panics the session handler
   # ("index out of bounds: the len is 1 but the index is 2", pg_sni_router.rs:326). It also does
   # no authentication and cannot wake a suspended compute. The proxy below covers every case.
 
@@ -126,8 +126,8 @@ services:
     profiles: [proxy]
     restart: always
     image: ${NEON_REPOSITORY:-docker.io/neondatabase}/neon:${NEON_TAG:-latest}
-    # 5432 by default so the connection strings need no port, which is what the SiteOps client
-    # requires. Set PROXY_PORT when a local PostgreSQL already owns 5432.
+    # 5432 by default so the connection strings need no port, matching the shape Neon Cloud hands
+    # out. Set PROXY_PORT when a local PostgreSQL already owns 5432.
     # 5432 = Postgres wire (TLS); --wss on 7001 serves SQL HTTPS/WebSocket.
     # --http is metrics/health, not the SQL API; keep it on an unpublished port.
     ports: ["${PROXY_PORT:-5432}:5432", "${PROXY_HTTP_PORT:-7001}:7001"]

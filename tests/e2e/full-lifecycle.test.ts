@@ -48,7 +48,7 @@ const config: Config = {
   portRange: [55700, 55760],
   // `direct` publishes the compute port on the host, which is what psql below connects to.
   routeMode: 'direct',
-  zone: 'db.siteops.localhost',
+  zone: 'db.neon.localhost',
   proxyToken: undefined,
   validateResponses: true,
   identity: testIdentity(),

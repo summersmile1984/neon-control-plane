@@ -54,7 +54,7 @@ const config: Config = {
   computeVolumeRoot: join(workdir, 'computes'),
   portRange: [55900, 55920],
   routeMode: 'direct',
-  zone: 'db.siteops.localhost',
+  zone: 'db.neon.localhost',
   proxyToken: undefined,
   validateResponses: true,
   identity: testIdentity(),

@@ -44,7 +44,7 @@ function makeConfig(): Config {
     computeVolumeRoot: join(workdir, 'computes'),
     portRange: [55500, 55520],
     routeMode: 'proxy',
-    zone: 'db.siteops.localhost',
+    zone: 'db.neon.localhost',
     proxyToken: undefined,
     validateResponses: true,
     identity: testIdentity(),
@@ -139,7 +139,7 @@ describe('projects', () => {
     expect(String(roles[0]!.password).length).toBeGreaterThan(10);
     expect(databases[0]).toMatchObject({ name: 'neondb', owner_name: 'neondb_owner' });
     expect(endpoints[0]!.current_state).toBe('init');
-    expect(String(uris[0]!.connection_uri)).toMatch(/^postgresql:\/\/neondb_owner:.+@ep-.+\.db\.siteops\.localhost\/neondb\?sslmode=require&channel_binding=require$/);
+    expect(String(uris[0]!.connection_uri)).toMatch(/^postgresql:\/\/neondb_owner:.+@ep-.+\.db\.neon\.localhost\/neondb\?sslmode=require&channel_binding=require$/);
 
     // the storage side really was driven
     expect(fakes.state.tenants.size).toBe(1);
@@ -194,7 +194,7 @@ describe('branches', () => {
       body: JSON.stringify({
         branch: { name: 'feature' },
         endpoints: [{ type: 'read_write' }],
-        annotation_value: { siteops_logical_resource_id: 'lr_1', siteops_workspace_id: 'ws_1' },
+        annotation_value: { logical_resource_id: 'lr_1', workspace_id: 'ws_1' },
       }),
     });
     expect(response.status, await response.clone().text()).toBe(201);
@@ -204,8 +204,8 @@ describe('branches', () => {
     expect(String(branch.id)).toMatch(/^br-/);
     expect(branch.parent_id).toBeTruthy();
     expect(branch.parent_lsn).toBeTruthy();
-    // SiteOps reads this back to reconcile its own resources.
-    expect(branch.annotation_value).toEqual({ siteops_logical_resource_id: 'lr_1', siteops_workspace_id: 'ws_1' });
+    // Consumers read this back to reconcile their own resources.
+    expect(branch.annotation_value).toEqual({ logical_resource_id: 'lr_1', workspace_id: 'ws_1' });
     expect((body.endpoints as unknown[]).length).toBe(1);
     expect(fakes.state.timelines.size).toBe(2);
   });

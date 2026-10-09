@@ -9,7 +9,7 @@ import type { BranchRow, DatabaseRow, EndpointRow, OperationRow, ProjectRow, Rol
  */
 
 export interface ViewContext {
-  /** Hostname suffix used to build `proxy_host` / endpoint hosts, e.g. `db.siteops.localhost`. */
+  /** Hostname suffix used to build `proxy_host` / endpoint hosts, e.g. `db.neon.localhost`. */
   readonly zone: string;
   readonly creationSource: string;
   readonly ownerId: string;
@@ -86,7 +86,7 @@ export function branchView(row: BranchRow, context: ViewContext): Record<string,
     active_time_seconds: 0,
     written_data_bytes: 0,
     data_transfer_bytes: 0,
-    // SiteOps reads annotation_value off the branch to reconcile its own logical resources.
+    // Consumers read annotation_value off the branch to attach their own bookkeeping.
     ...(Object.keys(annotation).length > 0 ? { annotation_value: annotation } : {}),
   };
 }

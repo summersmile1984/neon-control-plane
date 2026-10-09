@@ -8,7 +8,7 @@ import type { BranchRow, DatabaseRow, EndpointRow, OperationRow, ProjectRow, Rol
  * catch a missing required field before it reaches a consumer.
  */
 const spec = createValidators();
-const context: ViewContext = { zone: 'db.siteops.localhost', creationSource: 'neon-control-plane', ownerId: 'org-local' };
+const context: ViewContext = { zone: 'db.neon.localhost', creationSource: 'neon-control-plane', ownerId: 'org-local' };
 const ts = '2026-09-07T10:00:00.000Z';
 
 const projectRow: ProjectRow = {
@@ -22,13 +22,13 @@ const branchRow: BranchRow = {
   id: 'br-main-0001', project_id: projectRow.id, timeline_id: 'b'.repeat(32), name: 'main', parent_id: null,
   parent_lsn: null, parent_timestamp: null, is_default: 1, protected: 0, current_state: 'ready',
   pending_state: null, state_changed_at: ts, logical_size: 23027712,
-  annotation_json: '{"siteops_logical_resource_id":"lr_1","siteops_workspace_id":"ws_1"}',
+  annotation_json: '{"logical_resource_id":"lr_1","workspace_id":"ws_1"}',
   created_at: ts, updated_at: ts, deleted_at: null,
 };
 
 const endpointRow: EndpointRow = {
   id: 'ep-quiet-river-a1b2c3d4', project_id: projectRow.id, branch_id: branchRow.id, name: 'analytics', type: 'read_write',
-  current_state: 'active', pending_state: null, host: 'ep-quiet-river-a1b2c3d4.db.siteops.localhost',
+  current_state: 'active', pending_state: null, host: 'ep-quiet-river-a1b2c3d4.db.neon.localhost',
   container_id: 'abc', pg_port: 55501, http_port: 55601, suspend_timeout_seconds: 300,
   autoscaling_min_cu: 0.25, autoscaling_max_cu: 0.25, settings_json: '{}', disabled: 0,
   last_active: ts, started_at: ts, suspended_at: null, created_at: ts, updated_at: ts, deleted_at: null,
@@ -55,7 +55,7 @@ function expectValid(schemaName: string, body: unknown): void {
 
 describe('views satisfy the official schemas', () => {
   it('returns actual project ownership and reconciliation markers without substituting the configured default organization', () => {
-    const annotation = { siteops_workspace_id: 'ws_actual', siteops_logical_resource_id: 'ws_actual' };
+    const annotation = { workspace_id: 'ws_actual', logical_resource_id: 'ws_actual' };
     const row = { ...projectRow, org_id: 'org-other', annotation_json: JSON.stringify(annotation) };
     const view = projectView(row, context);
     expect(view).toMatchObject({ org_id: 'org-other', owner_id: 'org-other', default_branch_id: row.default_branch_id, annotation_value: annotation });
@@ -91,11 +91,11 @@ describe('views satisfy the official schemas', () => {
     expectValid('responses:CreatedProject', {
       project: projectView(projectRow, context),
       connection_uris: [{
-        connection_uri: 'postgresql://neondb_owner:pw@ep.db.siteops.localhost:5432/neondb?sslmode=require',
+        connection_uri: 'postgresql://neondb_owner:pw@ep.db.neon.localhost:5432/neondb?sslmode=require',
         connection_parameters: {
           database: 'neondb', password: 'pw', role: 'neondb_owner',
-          host: 'ep-quiet-river-a1b2c3d4.db.siteops.localhost',
-          pooler_host: 'ep-quiet-river-a1b2c3d4-pooler.db.siteops.localhost',
+          host: 'ep-quiet-river-a1b2c3d4.db.neon.localhost',
+          pooler_host: 'ep-quiet-river-a1b2c3d4-pooler.db.neon.localhost',
         },
       }],
       roles: [roleView(roleRow, 'pw')],

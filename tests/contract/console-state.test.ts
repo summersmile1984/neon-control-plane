@@ -42,7 +42,7 @@ function config(): Config {
     safekeepers: ['safekeeper1:5454'], neonTag: 'test', computeImageRepo: 'docker.io/neondatabase',
     dockerSocket: '/var/run/docker.sock', dockerNetwork: 'neon-cp-test',
     computeVolumeRoot: join(workdir, 'computes'), portRange: [55600, 55620],
-    routeMode: 'proxy', zone: 'db.siteops.localhost',
+    routeMode: 'proxy', zone: 'db.neon.localhost',
     proxyToken: undefined, validateResponses: true,
     identity: testIdentity(),
   };

@@ -14,14 +14,15 @@ import {
  * startup packet (`options=endpoint=...`) rather than in SNI, because the container reaches the
  * proxy as `host.docker.internal` and cannot put the endpoint id in that hostname.
  *
- * Preconditions (skipped, not failed, when missing): the live stack from live.ts, plus a locally
- * built `siteops-directus-container` image — `scripts/directus-local-harness.sh up` in the sibling
- * siteops-platform checkout builds one. Override with DIRECTUS_IMAGE.
+ * Preconditions (skipped, not failed, when missing): the live stack from live.ts, plus a local
+ * Directus image built for this test. Point DIRECTUS_IMAGE at it; otherwise the newest local image
+ * tagged `directus-e2e-harness:` is used.
  */
 
 const CONTAINER = 'neon-cp-e2e-directus';
 const HOST_PORT = Number(process.env.DIRECTUS_E2E_PORT ?? 8056);
 const ADMIN_TOKEN = 'local_healthcheck_token_0000000000000000';
+const IMAGE_REPOSITORY = 'directus-e2e-harness';
 
 let project: CreatedProject | undefined;
 let skipReason: string | undefined = 'not initialised';
@@ -30,7 +31,7 @@ function newestLocalImage(): string | undefined {
   if (process.env.DIRECTUS_IMAGE) return process.env.DIRECTUS_IMAGE;
   const rows = execFileSync('docker', ['images', '--format', '{{.CreatedAt}}|{{.Repository}}:{{.Tag}}'], { encoding: 'utf8' })
     .split('\n')
-    .filter((row) => row.includes('|siteops-directus-container:'))
+    .filter((row) => row.includes(`|${IMAGE_REPOSITORY}:`))
     .sort()
     .reverse();
   return rows[0]?.split('|')[1];
@@ -39,7 +40,9 @@ function newestLocalImage(): string | undefined {
 /**
  * Everything the image's config gate demands. Only DB_CONNECTION_STRING is under test; the rest
  * are local-only fixtures. The EDGE_DATA_* block is required by images built before that extension
- * was retired and is ignored by newer ones.
+ * was retired and is ignored by newer ones. Some keys are spelled after whatever built the image
+ * (SITEOPS_*, DIRECTUS_CELL_*) — they are the image's contract, not this repository's, so do not
+ * rename them here.
  */
 function environment(connectionString: string): string[] {
   const values: Record<string, string> = {
@@ -47,8 +50,8 @@ function environment(connectionString: string): string[] {
     PUBLIC_URL: `http://localhost:${HOST_PORT}`,
     DB_CLIENT: 'pg', DB_CONNECTION_STRING: connectionString, DB_POOL__MIN: '0', DB_POOL__MAX: '3',
     DIRECTUS_RUNTIME_START_MODE: 'official_bootstrap',
-    SECRET: 'siteops_local_directus_secret_00000000000000',
-    ADMIN_EMAIL: 'admin@example.com', ADMIN_PASSWORD: 'siteops_local_admin_password_please_change',
+    SECRET: 'local_directus_secret_00000000000000000',
+    ADMIN_EMAIL: 'admin@example.com', ADMIN_PASSWORD: 'local_admin_password_please_change',
     ADMIN_TOKEN, DIRECTUS_HEALTHCHECK_TOKEN: ADMIN_TOKEN,
     TELEMETRY: 'false', EXTENSIONS_PATH: '/directus/extensions',
     SITEOPS_DIRECTUS_SOURCE_REVISION: 'neon-cp-e2e',
@@ -89,7 +92,7 @@ beforeAll(async () => {
   if (skipReason) return;
   const image = newestLocalImage();
   if (!image) {
-    skipReason = 'no local siteops-directus-container image; build one with the SiteOps harness or set DIRECTUS_IMAGE';
+    skipReason = 'no local Directus harness image; set DIRECTUS_IMAGE or build one tagged directus-e2e-harness';
     return;
   }
 
